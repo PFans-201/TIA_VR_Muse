@@ -132,6 +132,16 @@ public static class PuzzleSceneBuilder
         var cola   = colaGO.AddComponent<CognitiveLoadAdapter>();
         cola.hintThreshold = 0.55f;   // colour hints appear at moderate stress
 
+        // Muse S Athena BrainFlow adapter — feeds SetStressLevel() from real EEG.
+        // Set macAddress in the Inspector before entering Play Mode.
+        // While the device is absent, use CognitiveLoadAdapter's debugStressOverride slider.
+        var museGO  = new GameObject("MuseAthenaAdapter");
+        var muse    = museGO.AddComponent<MuseAthenaAdapter>();
+        muse.cognitiveLoad         = cola;
+        muse.updateIntervalSeconds = 2f;
+        muse.windowSeconds         = 4f;
+        muse.enableOptical         = true;
+
         var phsGO = new GameObject("PieceHintSystem");
         var phs   = phsGO.AddComponent<PieceHintSystem>();
 
