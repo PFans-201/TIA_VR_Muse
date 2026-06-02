@@ -129,15 +129,26 @@ public static class PuzzleSceneBuilder
 
         // ── Systems ───────────────────────────────────────────────────────
         var colaGO = new GameObject("CognitiveLoadAdapter");
-        colaGO.AddComponent<CognitiveLoadAdapter>();
+        var cola   = colaGO.AddComponent<CognitiveLoadAdapter>();
+        cola.hintThreshold = 0.55f;   // colour hints appear at moderate stress
 
         var phsGO = new GameObject("PieceHintSystem");
         var phs   = phsGO.AddComponent<PieceHintSystem>();
 
+        var adcGO = new GameObject("AdaptiveDifficultyController");
+        var adc   = adcGO.AddComponent<AdaptiveDifficultyController>();
+        adc.assistanceOnset = 0.70f;  // mechanical help (magnet/visibility) above this
+        adc.assistanceMax   = 0.95f;  // full Easy-mode help at this stress level
+        adc.rampUpSpeed     = 1.5f;
+        adc.rampDownSpeed   = 0.35f;
+        adc.cognitiveLoad   = cola;
+        // adc.puzzleManager wired after pm is created (see below)
+
         // ── Puzzle Manager ────────────────────────────────────────────────
         var pmGO = new GameObject("PuzzleManager");
         var pm   = pmGO.AddComponent<PuzzleManager>();
-        pm.hintSystem = phs;
+        pm.hintSystem   = phs;
+        adc.puzzleManager = pm;   // wire adaptive controller → manager
 
         var anchorGO = new GameObject("PuzzleAnchor");
         anchorGO.transform.position = new Vector3(0f, 1.01f, 0f);
@@ -333,14 +344,22 @@ public static class PuzzleSceneBuilder
                    new Vector2(0f, 160f), new Vector2(560f, 60f), 34, Color.white);
 
         var easyBtn   = MakeUIButton(diffPanel.transform, "EasyBtn",   "Easy",
-                                      new Vector2(-190f, 40f), new Color(0.72f, 0.72f, 0.72f));
+                                      new Vector2(-190f, 50f), new Color(0.72f, 0.72f, 0.72f));
         var mediumBtn = MakeUIButton(diffPanel.transform, "MediumBtn", "Medium",
-                                      new Vector2(   0f, 40f), new Color(0.60f, 0.60f, 0.62f));
+                                      new Vector2(   0f, 50f), new Color(0.60f, 0.60f, 0.62f));
         var hardBtn   = MakeUIButton(diffPanel.transform, "HardBtn",   "Hard",
-                                      new Vector2( 190f, 40f), new Color(0.48f, 0.48f, 0.50f));
+                                      new Vector2( 190f, 50f), new Color(0.48f, 0.48f, 0.50f));
+
+        // Sub-labels describing what each baseline means
+        MakeUIText(diffPanel.transform, "EasyDesc",   "Full assist\nStrong magnet\nClear pieces",
+                   new Vector2(-190f, -20f), new Vector2(155f, 55f), 13, new Color(0.60f, 0.60f, 0.62f));
+        MakeUIText(diffPanel.transform, "MediumDesc", "Moderate assist\nLight magnet\nSubtle pieces",
+                   new Vector2(   0f, -20f), new Vector2(155f, 55f), 13, new Color(0.60f, 0.60f, 0.62f));
+        MakeUIText(diffPanel.transform, "HardDesc",   "Minimal assist\nNo magnet\nBlended pieces",
+                   new Vector2( 190f, -20f), new Vector2(155f, 55f), 13, new Color(0.60f, 0.60f, 0.62f));
 
         MakeUIText(diffPanel.transform, "HintLabel",
-                   "Easy: guided    Medium: subtle    Hard: on your own",
+                   "Sets your baseline assistance. The system adapts automatically to your readings.",
                    new Vector2(0f, -60f), new Vector2(560f, 40f), 17, new Color(0.65f, 0.65f, 0.65f));
 
         // ── Shared status label ────────────────────────────────────────────

@@ -84,8 +84,10 @@ public class PuzzleManager : MonoBehaviour
     [SerializeField] private DifficultyLevel _currentDifficulty;
     [SerializeField] private PuzzleType      _currentPuzzleType;
 
-    private List<GameObject> _activePieces = new();
-    private int              _solvedCount;
+    private List<GameObject>  _activePieces    = new();
+    private int               _solvedCount;
+    private DifficultySettings _baselineSettings;   // the settings chosen at StartPuzzle
+    private bool              _puzzleStarted;
 
     /// Fired when the player completes a puzzle — DifficultyUI listens to unlock the next level.
     public event Action<PuzzleType, DifficultyLevel> OnPuzzleCompleted;
@@ -116,6 +118,7 @@ public class PuzzleManager : MonoBehaviour
         _currentPuzzleType = puzzleType;
         _currentDifficulty = level;
         _solvedCount       = 0;
+        _puzzleStarted     = false;   // reset until baseline is stored below
 
         // Deactivate every piece and snap zone across both puzzles
         SetGroupActive(snowmanHardPieces, false);
@@ -139,6 +142,8 @@ public class PuzzleManager : MonoBehaviour
             DifficultyLevel.Medium => mediumSettings,
             _                     => hardSettings,
         };
+        _baselineSettings = s;
+        _puzzleStarted    = true;
 
         var hintPairs = new List<PieceHintSystem.PiecePair>();
 
@@ -187,6 +192,48 @@ public class PuzzleManager : MonoBehaviour
                   $"{_activePieces.Count} pieces  " +
                   $"magnet={s.magnetForce:F1} N  " +
                   $"brightness={s.pieceBrightness * 100:F0}%");
+    }
+
+    // ── Adaptive assistance (called by AdaptiveDifficultyController) ─────────
+
+    /// Interpolates all active piece and snap-zone settings between the player's
+    /// chosen baseline (blend=0) and maximum Easy-mode assistance (blend=1).
+    /// Called every frame by AdaptiveDifficultyController while stress is elevated.
+    public void OverrideAssistance(float blend)
+    {
+        if (!_puzzleStarted) return;
+
+        var s = new DifficultySettings
+        {
+            magnetForce      = Mathf.Lerp(_baselineSettings.magnetForce,      easySettings.magnetForce,      blend),
+            magnetRange      = Mathf.Lerp(_baselineSettings.magnetRange,      easySettings.magnetRange,      blend),
+            scatterRadius    = _baselineSettings.scatterRadius,   // scatter only set at start, not live
+            pieceBrightness  = Mathf.Lerp(_baselineSettings.pieceBrightness,  easySettings.pieceBrightness,  blend),
+            ghostIdleAlpha   = Mathf.Lerp(_baselineSettings.ghostIdleAlpha,   easySettings.ghostIdleAlpha,   blend),
+            ghostActiveAlpha = Mathf.Lerp(_baselineSettings.ghostActiveAlpha, easySettings.ghostActiveAlpha, blend),
+        };
+
+        foreach (var pieceObj in _activePieces)
+        {
+            if (pieceObj == null) continue;
+            var piece = pieceObj.GetComponent<PuzzlePiece>();
+            if (piece == null || piece.IsSolved) continue;
+
+            piece.isMagneticEnabled = s.magnetForce > 0f;
+            piece.magnetForce       = s.magnetForce;
+            piece.magnetRange       = s.magnetRange;
+            piece.SetVisibility(s.pieceBrightness);
+
+            if (piece.correctPlacementTarget != null)
+            {
+                var zone = piece.correctPlacementTarget.GetComponent<MagneticSnapZone>();
+                if (zone != null)
+                {
+                    zone.activationRange = Mathf.Max(s.magnetRange, 0.10f);
+                    zone.SetGhostAlpha(s.ghostIdleAlpha, s.ghostActiveAlpha);
+                }
+            }
+        }
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

@@ -19,7 +19,12 @@ public class DifficultyUI : MonoBehaviour
     [Header("Progression")]
     [Tooltip("Sequential: Easy → Medium → Hard unlocks progressively.\n" +
              "FreeChoice: all difficulties available from the start.")]
-    public ProgressionMode progressionMode = ProgressionMode.Sequential;
+    [Tooltip("FreeChoice (default): all difficulties selectable immediately — difficulty expresses\n" +
+             "how much baseline assistance the player wants. The adaptive system will adjust\n" +
+             "further based on MUSE S readings regardless of this initial choice.\n\n" +
+             "Sequential: Easy must be completed before Medium unlocks, etc.\n" +
+             "Useful if a fixed progression order is required by the study protocol.")]
+    public ProgressionMode progressionMode = ProgressionMode.FreeChoice;
 
     [Header("Step 1 — Puzzle Type")]
     public GameObject puzzleTypePanel;
