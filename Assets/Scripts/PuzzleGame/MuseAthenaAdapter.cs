@@ -63,7 +63,13 @@ using brainflow.math;
 ///
 /// Pushes the final stress level to CognitiveLoadAdapter.SetStressLevel().
 ///
-/// WHY NOT β/α RATIO (colleagues' approach)?
+/// SINGLETON + SCENE PERSISTENCE
+///   This component is a singleton with DontDestroyOnLoad so the Bluetooth
+///   connection and recorded baselines survive the transition from the tutorial
+///   scene into the puzzle scene.  The duplicate instance created by
+///   PuzzleSceneBuilder is automatically destroyed by the singleton guard.
+///
+/// WHY NOT β/α RATIO?
 ///   Beta/alpha tracks focused *attention* but not *overload*. Under cognitive
 ///   overload theta rises and alpha falls — the theta/alpha ratio is the
 ///   established cognitive-load index (Klimesch 1999, Onton et al. 2005).
@@ -71,6 +77,7 @@ using brainflow.math;
 [DefaultExecutionOrder(-10)]
 public class MuseAthenaAdapter : MonoBehaviour
 {
+    public static MuseAthenaAdapter Instance { get; private set; }
 #if MUSE_BRAINFLOW
     private const int k_BoardId = (int)BoardIds.MUSE_S_ATHENA_BOARD;  // 67
 #else
@@ -135,6 +142,26 @@ public class MuseAthenaAdapter : MonoBehaviour
 
 #if MUSE_BRAINFLOW
 
+    // ── Public API for TutorialManager ───────────────────────────────────────
+
+    /// Latest five band powers [delta, theta, alpha, beta, gamma] averaged across
+    /// EEG channels.  Written by the BG thread; reading the reference from the
+    /// main thread is safe (array reference assignment is atomic on 64-bit CLR).
+    public double[] LatestBandPowers { get; private set; }
+
+    /// True once at least one clean EEG window has been processed.
+    public bool HasValidData { get; private set; }
+
+    /// Replace the auto-computed baseline with one recorded by TutorialManager.
+    /// Call this after the tutorial's active-VR baseline phase completes.
+    /// Thread-safe: the BG thread picks it up at the start of its next iteration.
+    public void OverrideBaseline(double[] mean, double[] std)
+    {
+        _overrideMean = mean;
+        _overrideStd  = std;
+        _hasOverride  = true;   // volatile write: BG thread sees this immediately
+    }
+
     // ── Thread communication ──────────────────────────────────────────────────
 
     // Written by BG thread, read by Update() on main thread.
@@ -148,10 +175,28 @@ public class MuseAthenaAdapter : MonoBehaviour
     private volatile bool   _running;
     private Thread           _bgThread;
 
+    // External baseline from TutorialManager (written on main thread, read on BG thread)
+    private volatile bool   _hasOverride;
+    private double[]        _overrideMean;
+    private double[]        _overrideStd;
+
     // ── Unity lifecycle ───────────────────────────────────────────────────────
+
+    private void Awake()
+    {
+        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
+        Instance = this;
+        DontDestroyOnLoad(gameObject);
+    }
 
     private void Start()
     {
+        if (Instance != this) return;   // destroyed duplicate — don't start thread
+        if (cognitiveLoad == null)
+        {
+            // Try to find it in the scene (handles the case where both are DontDestroyOnLoad)
+            cognitiveLoad = CognitiveLoadAdapter.Instance;
+        }
         if (cognitiveLoad == null)
         {
             Debug.LogError("[MuseAthenaAdapter] cognitiveLoad not assigned. " +
@@ -275,12 +320,24 @@ public class MuseAthenaAdapter : MonoBehaviour
                 Thread.Sleep((int)(updateIntervalSeconds * 1000));
                 if (!_running) break;
 
+                // Apply active-VR baseline from TutorialManager if available
+                if (_hasOverride)
+                {
+                    _hasOverride = false;
+                    baselineMean = _overrideMean;
+                    baselineStd  = _overrideStd;
+                    Debug.Log("[MuseAthenaAdapter] Baseline overridden by TutorialManager (active-VR reference).");
+                }
+
                 // ── EEG: baseline-corrected cognitive load index ───────────
                 double[,] eegData = board.get_current_board_data(samplesNeeded);
                 if (eegData.GetLength(1) < samplesNeeded / 2) continue;
 
                 double[] bp = GetFilteredBandPowers(eegData, eegChannels, samplingRate);
                 if (bp == null) continue;
+
+                LatestBandPowers = bp;   // expose for TutorialManager baseline collection
+                HasValidData     = true;
 
                 // θ z-score (positive = more theta than at rest → more load)
                 double thetaZ = ZScore(bp[1], baselineMean[1], baselineStd[1]);

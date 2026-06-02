@@ -21,10 +21,11 @@ using TMPro;
 public static class PuzzleSceneBuilder
 {
     // ── Asset paths ──────────────────────────────────────────────────────────
-    private const string k_MatDir      = "Assets/Materials/PuzzleGame";
-    private const string k_EntryScene  = "Assets/Scenes/EntryHall.unity";
-    private const string k_ZenScene    = "Assets/Scenes/ZenPuzzleRoom.unity";
-    private const string k_XRRigPrefab = "Assets/VRTemplateAssets/Prefabs/Setup/Complete XR Origin Set Up Variant.prefab";
+    private const string k_MatDir       = "Assets/Materials/PuzzleGame";
+    private const string k_EntryScene   = "Assets/Scenes/EntryHall.unity";
+    private const string k_TutScene     = "Assets/Scenes/TutorialRoom.unity";
+    private const string k_ZenScene     = "Assets/Scenes/ZenPuzzleRoom.unity";
+    private const string k_XRRigPrefab  = "Assets/VRTemplateAssets/Prefabs/Setup/Complete XR Origin Set Up Variant.prefab";
 
     // ── Menu items ───────────────────────────────────────────────────────────
 
@@ -33,11 +34,22 @@ public static class PuzzleSceneBuilder
     {
         EnsureFolderPath(k_MatDir);
         BuildEntryHallScene();
+        BuildTutorialRoomScene();
         BuildZenPuzzleRoomScene();
-        AddScenesToBuildSettings(k_EntryScene, k_ZenScene);
+        // Scene order in build: 0=EntryHall, 1=TutorialRoom, 2=ZenPuzzleRoom
+        AddScenesToBuildSettings(k_EntryScene, k_TutScene, k_ZenScene);
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
         Debug.Log("[PuzzleSceneBuilder] All scenes built. Check File > Build Settings for scene order.");
+    }
+
+    [MenuItem("Puzzle Game/Build Tutorial Room Only")]
+    public static void BuildTutorialOnly()
+    {
+        EnsureFolderPath(k_MatDir);
+        BuildTutorialRoomScene();
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
     }
 
     [MenuItem("Puzzle Game/Build Entry Hall Only")]
@@ -102,6 +114,197 @@ public static class PuzzleSceneBuilder
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    // SCENE: Tutorial Room  (VR onboarding + EEG baseline calibration)
+    // ════════════════════════════════════════════════════════════════════════
+
+    private static void BuildTutorialRoomScene()
+    {
+        var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+
+        // Warm, slightly brighter grey to feel welcoming and distinct from the puzzle room
+        AddDirectionalLight(new Color(0.97f, 0.96f, 0.93f), 0.70f, Quaternion.Euler(45f, -30f, 0f));
+        SetAmbientFlat(new Color(0.38f, 0.38f, 0.38f));
+
+        var floorMat  = GetOrCreateMat("Floor_Tutorial",  new Color(0.80f, 0.80f, 0.80f));
+        var wallMat   = GetOrCreateMat("Wall_Tutorial",   new Color(0.88f, 0.88f, 0.88f));
+        var tableMat  = GetOrCreateMat("Table_Tutorial",  new Color(0.94f, 0.94f, 0.94f));
+        var restMat   = GetOrCreateMat("RestZone",        new Color(0.70f, 0.85f, 0.70f));   // soft green circle
+        var grabMat0  = GetOrCreateMat("GrabObj_Red",     new Color(0.85f, 0.38f, 0.38f));
+        var grabMat1  = GetOrCreateMat("GrabObj_Blue",    new Color(0.38f, 0.55f, 0.85f));
+        var grabMat2  = GetOrCreateMat("GrabObj_Yellow",  new Color(0.90f, 0.82f, 0.30f));
+        var grabMat3  = GetOrCreateMat("GrabObj_Green",   new Color(0.38f, 0.75f, 0.45f));
+        var pedestalM = GetOrCreateMat("Pedestal",        new Color(0.75f, 0.75f, 0.75f));
+
+        // 8 × 9 × 3 m room (slightly longer than puzzle room)
+        AddFloor(Vector3.zero, 8f, 9f, floorMat);
+        AddWalls(8f, 9f, 3f, wallMat);
+
+        SpawnXRRig(new Vector3(0f, 0f, -3.5f));
+
+        // ── Rest zone — soft green disc on floor where participant stands during baseline ──
+        var restZone = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        restZone.name = "RestZoneMarker";
+        restZone.transform.position   = new Vector3(0f, 0.01f, -1.0f);
+        restZone.transform.localScale = new Vector3(1.0f, 0.01f, 1.0f);
+        restZone.GetComponent<Renderer>().material = restMat;
+        Object.DestroyImmediate(restZone.GetComponent<Collider>());
+        restZone.SetActive(false);   // TutorialManager enables it during rest-baseline phase
+
+        // ── Grab practice shelf ───────────────────────────────────────────────
+        AddBox("GrabShelf",  new Vector3(0f, 0.55f, 1.8f), new Vector3(1.6f, 0.08f, 0.40f), tableMat);
+
+        // Four grab objects sitting on the shelf — start INACTIVE (enabled by TutorialManager)
+        var grabDefs = new (string name, Vector3 pos, Material mat)[]
+        {
+            ("GrabSphere_Red",    new Vector3(-0.55f, 0.87f, 1.8f), grabMat0),
+            ("GrabSphere_Blue",   new Vector3(-0.18f, 0.87f, 1.8f), grabMat1),
+            ("GrabSphere_Yellow", new Vector3( 0.18f, 0.87f, 1.8f), grabMat2),
+            ("GrabSphere_Green",  new Vector3( 0.55f, 0.87f, 1.8f), grabMat3),
+        };
+        var grabObjects = new List<GameObject>();
+        foreach (var d in grabDefs)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            go.name = d.name;
+            go.transform.position   = d.pos;
+            go.transform.localScale = Vector3.one * 0.14f;
+            go.GetComponent<Renderer>().material = d.mat;
+
+            var rb = go.AddComponent<Rigidbody>();
+            rb.mass = 0.15f;
+
+            go.AddComponent<XRGrabInteractable>();
+            go.SetActive(false);   // TutorialManager enables during VRTutorial phase
+            grabObjects.Add(go);
+        }
+
+        // ── Drop pedestals ────────────────────────────────────────────────────
+        AddBox("Pedestal_Left",  new Vector3(-0.7f, 0.55f, 0.5f), new Vector3(0.30f, 1.1f, 0.30f), pedestalM);
+        AddBox("Pedestal_Right", new Vector3( 0.7f, 0.55f, 0.5f), new Vector3(0.30f, 1.1f, 0.30f), pedestalM);
+
+        // ── Systems ───────────────────────────────────────────────────────────
+        var colaGO = new GameObject("CognitiveLoadAdapter");
+        var cola   = colaGO.AddComponent<CognitiveLoadAdapter>();
+        cola.hintThreshold = 0.55f;
+
+        var museGO = new GameObject("MuseAthenaAdapter");
+        var muse   = museGO.AddComponent<MuseAthenaAdapter>();
+        muse.cognitiveLoad         = cola;
+        muse.updateIntervalSeconds = 2f;
+        muse.windowSeconds         = 4f;
+        muse.enableOptical         = true;
+        // baselineDurationSeconds = 60 (adapter's own auto-baseline still runs as fallback
+        // if tutorial baseline collection fails — TutorialManager overrides it on completion)
+
+        // ── Tutorial Manager ──────────────────────────────────────────────────
+        var tmGO = new GameObject("TutorialManager");
+        var tm   = tmGO.AddComponent<TutorialManager>();
+        tm.museAdapter            = muse;
+        tm.puzzleSceneName        = "ZenPuzzleRoom";
+        tm.restBaselineDuration   = 60f;
+        tm.activeBaselineDuration = 60f;
+        tm.restZoneMarker         = restZone;
+        tm.tutorialGrabObjects.AddRange(grabObjects);
+
+        // ── Instruction Canvas ────────────────────────────────────────────────
+        BuildTutorialUI(tm, new Vector3(0f, 1.8f, 2.8f));
+
+        EditorSceneManager.SaveScene(scene, k_TutScene);
+        Debug.Log($"[PuzzleSceneBuilder] Saved {k_TutScene}");
+    }
+
+    /// Builds the world-space instruction canvas and wires it to TutorialManager.
+    private static void BuildTutorialUI(TutorialManager tm, Vector3 pos)
+    {
+        var root = new GameObject("TutorialCanvas");
+        root.transform.position = pos;
+        root.transform.rotation = Quaternion.identity;
+
+        var canvas = root.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+        var rt = root.GetComponent<RectTransform>();
+        rt.sizeDelta = new Vector2(700f, 520f);
+        root.transform.localScale = Vector3.one * 0.003f;
+        root.AddComponent<CanvasScaler>();
+        root.AddComponent<GraphicRaycaster>();
+
+        // Background panel
+        var bg = AddUIPanel(root, "Background", Vector2.zero, new Vector2(700f, 520f),
+                            new Color(0.92f, 0.92f, 0.92f, 0.96f));
+
+        // Title
+        var titleGO  = new GameObject("InstructionTitle");
+        titleGO.transform.SetParent(bg.transform, false);
+        var titleRT  = titleGO.AddComponent<RectTransform>();
+        titleRT.anchoredPosition = new Vector2(0f, 190f);
+        titleRT.sizeDelta        = new Vector2(660f, 70f);
+        var titleTMP = titleGO.AddComponent<TextMeshProUGUI>();
+        titleTMP.text      = "Welcome";
+        titleTMP.fontSize  = 42f;
+        titleTMP.alignment = TextAlignmentOptions.Center;
+        titleTMP.color     = new Color(0.18f, 0.18f, 0.18f);
+
+        // Body
+        var bodyGO  = new GameObject("InstructionBody");
+        bodyGO.transform.SetParent(bg.transform, false);
+        var bodyRT  = bodyGO.AddComponent<RectTransform>();
+        bodyRT.anchoredPosition = new Vector2(0f, 20f);
+        bodyRT.sizeDelta        = new Vector2(640f, 280f);
+        var bodyTMP = bodyGO.AddComponent<TextMeshProUGUI>();
+        bodyTMP.text      = "";
+        bodyTMP.fontSize  = 24f;
+        bodyTMP.alignment = TextAlignmentOptions.Center;
+        bodyTMP.color     = new Color(0.22f, 0.22f, 0.22f);
+
+        // Progress bar
+        var sliderGO = new GameObject("ProgressBar");
+        sliderGO.transform.SetParent(bg.transform, false);
+        var sliderRT = sliderGO.AddComponent<RectTransform>();
+        sliderRT.anchoredPosition = new Vector2(0f, -185f);
+        sliderRT.sizeDelta        = new Vector2(580f, 22f);
+        var slider = sliderGO.AddComponent<Slider>();
+        slider.minValue = 0f; slider.maxValue = 1f; slider.value = 0f;
+
+        // Continue button
+        var btnGO  = new GameObject("ContinueButton");
+        btnGO.transform.SetParent(bg.transform, false);
+        var btnRT  = btnGO.AddComponent<RectTransform>();
+        btnRT.anchoredPosition = new Vector2(0f, -215f);
+        btnRT.sizeDelta        = new Vector2(260f, 52f);
+        btnGO.AddComponent<UnityEngine.UI.Image>().color = new Color(0.60f, 0.78f, 0.60f);
+        var btn    = btnGO.AddComponent<Button>();
+        var lblGO  = new GameObject("Label");
+        lblGO.transform.SetParent(btnGO.transform, false);
+        var lblRT  = lblGO.AddComponent<RectTransform>();
+        lblRT.sizeDelta = new Vector2(240f, 48f);
+        var lbl    = lblGO.AddComponent<TextMeshProUGUI>();
+        lbl.text      = "Continue";
+        lbl.fontSize  = 26f;
+        lbl.alignment = TextAlignmentOptions.Center;
+        lbl.color     = Color.white;
+
+        // Wire references into TutorialManager
+        tm.instructionPanel = root;
+        tm.instructionTitle = titleTMP;
+        tm.instructionBody  = bodyTMP;
+        tm.progressBar      = slider;
+        tm.continueButton   = btn;
+        tm.continueLabel    = lbl;
+    }
+
+    private static GameObject AddUIPanel(GameObject parent, string name,
+                                          Vector2 anchoredPos, Vector2 size, Color color)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent.transform, false);
+        var rt = go.AddComponent<RectTransform>();
+        rt.anchoredPosition = anchoredPos;
+        rt.sizeDelta        = size;
+        go.AddComponent<UnityEngine.UI.Image>().color = color;
+        return go;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     // SCENE: Zen Puzzle Room
     // ════════════════════════════════════════════════════════════════════════
 
@@ -145,13 +348,26 @@ public static class PuzzleSceneBuilder
         var phsGO = new GameObject("PieceHintSystem");
         var phs   = phsGO.AddComponent<PieceHintSystem>();
 
+        // SustainedStressDetector gates mechanical assistance on temporally persistent,
+        // low-variance stress — preventing transient noise spikes from triggering help.
+        var ssdGO = new GameObject("SustainedStressDetector");
+        var ssd   = ssdGO.AddComponent<SustainedStressDetector>();
+        ssd.cognitiveLoad      = cola;
+        ssd.onsetThreshold     = 0.60f;   // rolling mean must exceed this
+        ssd.maxVarianceForOnset = 0.04f;  // signal must be stable (not noisy)
+        ssd.minOnsetSeconds    = 20f;     // must be elevated for 20 s continuously
+        ssd.recoveryThreshold  = 0.40f;   // hysteresis: drop below this to exit Stressed
+        ssd.minRecoverySeconds = 15f;
+        ssd.windowSeconds      = 30f;
+
         var adcGO = new GameObject("AdaptiveDifficultyController");
         var adc   = adcGO.AddComponent<AdaptiveDifficultyController>();
-        adc.assistanceOnset = 0.70f;  // mechanical help (magnet/visibility) above this
-        adc.assistanceMax   = 0.95f;  // full Easy-mode help at this stress level
-        adc.rampUpSpeed     = 1.5f;
-        adc.rampDownSpeed   = 0.35f;
-        adc.cognitiveLoad   = cola;
+        adc.assistanceOnset  = 0.70f;
+        adc.assistanceMax    = 0.95f;
+        adc.rampUpSpeed      = 1.5f;
+        adc.rampDownSpeed    = 0.35f;
+        adc.cognitiveLoad    = cola;
+        adc.stressDetector   = ssd;       // gate assistance on sustained stress
         // adc.puzzleManager wired after pm is created (see below)
 
         // ── Puzzle Manager ────────────────────────────────────────────────
