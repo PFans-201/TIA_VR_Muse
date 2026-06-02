@@ -65,3 +65,7 @@ crashlytics-build.properties
 # Streaming Assets - Addressables
 [Aa]ssets/[Ss]treaming[Aa]ssets/aa.meta
 [Aa]ssets/[Ss]treaming[Aa]ssets/aa/*
+
+# External cloned repos (exploration only — not part of the project)
+BlueMuse/
+brainflow/
