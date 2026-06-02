@@ -1,62 +1,62 @@
 using UnityEngine;
 
-/// <summary>
-/// Attach to each snap target Transform — the same GameObject you assign as
+/// Attach to each snap-target Transform — the same GameObject assigned as
 /// "correctPlacementTarget" on a PuzzlePiece.
 ///
-/// Responsibilities:
-///   - Displays a ghost/silhouette mesh at the target position to guide the player.
-///   - Switches to an "active" ghost material when the piece is close enough that
-///     the magnetic force in PuzzlePiece is pulling it.
-///   - Hides the ghost once the piece is correctly placed.
+/// Ghost visibility by difficulty:
+///   PuzzleManager calls SetGhostAlpha(idle, active) after each StartPuzzle.
+///   Easy  → idle 0.45 / active 0.70  (clearly visible silhouette)
+///   Medium → idle 0.20 / active 0.40  (subtle hint)
+///   Hard   → idle 0.04 / active 0.12  (barely visible — you have to find the target)
 ///
-/// Setup in Unity Editor:
-///   1. Create an empty child GameObject where the piece should land.
-///      Match its position and rotation to the piece's solved pose.
-///   2. Attach this script to that GameObject.
-///   3. Assign that same GameObject as "correctPlacementTarget" on the matching PuzzlePiece.
-///   4. Set "linkedPiece" to the matching PuzzlePiece.
-///   5. Add a child MeshFilter + MeshRenderer (duplicate of the piece mesh) and assign
-///      it as "ghostRenderer". Apply a semi-transparent material to it in the Editor.
-///   6. Assign "ghostIdleMaterial"   — dim, semi-transparent (e.g. alpha ~0.2).
-///      Assign "ghostActiveMaterial" — brighter/glowing (e.g. alpha ~0.5, emissive tint).
-/// </summary>
+/// MUSE S hint colour:
+///   PieceHintSystem calls SetHintColor(color, blend) when cognitive overload
+///   is detected. The ghost tints to match its linked piece's hint colour so
+///   the player can immediately see which zone the highlighted piece belongs to.
 public class MagneticSnapZone : MonoBehaviour
 {
     [Header("Linked Piece")]
-    [Tooltip("The PuzzlePiece whose correctPlacementTarget is this Transform.")]
     public PuzzlePiece linkedPiece;
 
     [Header("Ghost Visual")]
-    [Tooltip("MeshRenderer of the ghost/silhouette child object.")]
     public Renderer ghostRenderer;
-
-    [Tooltip("Dim semi-transparent material shown when the piece is far away.")]
     public Material ghostIdleMaterial;
-
-    [Tooltip("Brighter/glowing material shown when the piece is within activation range.")]
     public Material ghostActiveMaterial;
 
     [Header("Proximity")]
-    [Tooltip("Distance (meters) at which the ghost switches to the active material. " +
-             "Should roughly match the magnetRange on PuzzlePiece.")]
+    [Tooltip("Distance (m) at which the ghost brightens. Should match PuzzlePiece.magnetRange.")]
     public float activationRange = 0.15f;
 
-    // ── Private state ────────────────────────────────────────────────────────
+    public bool IsSolved => _isSolved;
 
-    private bool _isSolved = false;
+    private bool     _isSolved;
+    private Material _ghostMat;          // per-instance copy owned by this zone
 
-    // ── Unity lifecycle ──────────────────────────────────────────────────────
+    private Color    _baseIdleColor;
+    private Color    _baseActiveColor;
+    private float    _currentIdleAlpha;
+    private float    _currentActiveAlpha;
+
+    private Color    _hintColor = Color.white;
+    private float    _hintBlend = 0f;
+
+    private void Awake()
+    {
+        if (ghostRenderer != null)
+            _ghostMat = ghostRenderer.material;  // creates per-instance copy
+
+        _baseIdleColor   = ghostIdleMaterial   != null ? ghostIdleMaterial.color   : new Color(0.65f, 0.80f, 1.00f, 0.20f);
+        _baseActiveColor = ghostActiveMaterial != null ? ghostActiveMaterial.color : new Color(0.45f, 0.88f, 1.00f, 0.45f);
+        _currentIdleAlpha   = _baseIdleColor.a;
+        _currentActiveAlpha = _baseActiveColor.a;
+    }
 
     private void OnEnable()
     {
         if (linkedPiece != null)
             linkedPiece.OnPieceSolved += HandlePieceSolved;
-
-        // Reset visual state when the zone is (re-)activated
         _isSolved = false;
         SetGhostVisible(true);
-        ApplyGhostMaterial(ghostIdleMaterial);
     }
 
     private void OnDisable()
@@ -67,34 +67,49 @@ public class MagneticSnapZone : MonoBehaviour
 
     private void Update()
     {
-        if (_isSolved || ghostRenderer == null || linkedPiece == null) return;
+        if (_isSolved || _ghostMat == null || linkedPiece == null) return;
 
-        float distance = Vector3.Distance(linkedPiece.transform.position, transform.position);
-        bool isNear = (distance <= activationRange);
+        float dist   = Vector3.Distance(linkedPiece.transform.position, transform.position);
+        bool  isNear = dist <= activationRange;
 
-        ApplyGhostMaterial(isNear ? ghostActiveMaterial : ghostIdleMaterial);
+        Color  baseCol   = isNear ? _baseActiveColor : _baseIdleColor;
+        float  alpha     = isNear ? _currentActiveAlpha : _currentIdleAlpha;
+
+        // Blend base ghost colour with hint colour; keep alpha
+        Color full  = new Color(baseCol.r, baseCol.g, baseCol.b, alpha);
+        Color hint  = new Color(_hintColor.r, _hintColor.g, _hintColor.b, alpha);
+        _ghostMat.color = Color.Lerp(full, hint, _hintBlend);
     }
 
-    // ── Event handlers ───────────────────────────────────────────────────────
+    // ── Difficulty control ────────────────────────────────────────────────────
+
+    /// Set ghost silhouette transparency for the current difficulty.
+    public void SetGhostAlpha(float idle, float active)
+    {
+        _currentIdleAlpha   = idle;
+        _currentActiveAlpha = active;
+    }
+
+    // ── MUSE S hint colour ────────────────────────────────────────────────────
+
+    /// blend=0 → base ghost colour. blend=1 → full hint colour tint.
+    public void SetHintColor(Color hint, float blend)
+    {
+        _hintColor = hint;
+        _hintBlend = Mathf.Clamp01(blend);
+    }
+
+    // ── Internal ──────────────────────────────────────────────────────────────
 
     private void HandlePieceSolved()
     {
         _isSolved = true;
         SetGhostVisible(false);
-        Debug.Log($"[MagneticSnapZone] '{gameObject.name}' — piece solved, ghost hidden.");
     }
-
-    // ── Helpers ──────────────────────────────────────────────────────────────
 
     private void SetGhostVisible(bool visible)
     {
         if (ghostRenderer != null)
             ghostRenderer.enabled = visible;
-    }
-
-    private void ApplyGhostMaterial(Material mat)
-    {
-        if (ghostRenderer != null && mat != null)
-            ghostRenderer.material = mat;
     }
 }

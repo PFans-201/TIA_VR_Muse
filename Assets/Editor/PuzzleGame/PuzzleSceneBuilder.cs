@@ -7,32 +7,17 @@ using UnityEngine.UI;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using TMPro;
 
-/// <summary>
-/// Unity Editor tool — builds both puzzle game scenes from scratch.
+/// Unity Editor tool — builds both puzzle scenes from scratch.
+/// USAGE: Puzzle Game  ▶  Build All Scenes
 ///
-/// USAGE:  In the Unity menu bar click   Puzzle Game  ▶  Build All Scenes
-///
-/// WHAT IT CREATES:
-///   • Assets/Scenes/EntryHall.unity
-///       - A 6 × 8 m room with a glowing portal archway.
-///       - Walking through the portal loads ZenPuzzleRoom.
-///       - Complete XR Origin rig placed 2 m behind the door.
-///
-///   • Assets/Scenes/ZenPuzzleRoom.unity
-///       - An 8 × 8 m room with a central puzzle table.
-///       - A 7-piece snowman assembled from Unity primitives.
-///       - Easy (3 pieces) / Medium (5) / Hard (7) with magnetic snapping on Easy.
-///       - World-space DifficultyUI canvas wired to PuzzleManager.
-///       - Snap zone ghosts for every piece, wired to MagneticSnapZone.
-///       - Complete XR Origin rig placed 3 m behind the table.
-///
-///   • Assets/Materials/PuzzleGame/
-///       - All required materials (opaque + transparent ghost materials).
-///
-/// AFTER RUNNING:
-///   1. File ▶ Build Settings — verify EntryHall is index 0, ZenPuzzleRoom is index 1.
-///   2. Open either scene and press Play to test in the editor.
-/// </summary>
+/// ZenPuzzleRoom contains:
+///   • Snowman puzzle  (Simple)  — 3 / 5 / 7 pieces
+///   • Robot puzzle    (Complex) — 5 / 8 / 12 pieces
+///   • All pieces start INACTIVE; PuzzleManager activates the right set
+///   • Zen grey environment: walls 87 %, floor 82 %, table near-white
+///   • Soft neutral directional light + grey ambient
+///   • CognitiveLoadAdapter + PieceHintSystem for MUSE S integration
+///   • Two-step DifficultyUI: puzzle type → difficulty
 public static class PuzzleSceneBuilder
 {
     // ── Asset paths ──────────────────────────────────────────────────────────
@@ -52,7 +37,7 @@ public static class PuzzleSceneBuilder
         AddScenesToBuildSettings(k_EntryScene, k_ZenScene);
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
-        Debug.Log("[PuzzleSceneBuilder] All scenes built. Open File > Build Settings and confirm scene order.");
+        Debug.Log("[PuzzleSceneBuilder] All scenes built. Check File > Build Settings for scene order.");
     }
 
     [MenuItem("Puzzle Game/Build Entry Hall Only")]
@@ -74,46 +59,43 @@ public static class PuzzleSceneBuilder
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // SCENE: Entry Hall
+    // SCENE: Entry Hall  (calm, minimal, grey)
     // ════════════════════════════════════════════════════════════════════════
 
     private static void BuildEntryHallScene()
     {
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-        // ── Lighting ──────────────────────────────────────────────────────
-        AddDirectionalLight(new Color(1.0f, 0.95f, 0.85f), 1.0f, Quaternion.Euler(45f, -30f, 0f));
-        SetAmbientFlat(new Color(0.20f, 0.20f, 0.25f));
+        // Soft neutral light
+        AddDirectionalLight(new Color(0.96f, 0.94f, 0.90f), 0.60f, Quaternion.Euler(50f, -20f, 0f));
+        SetAmbientFlat(new Color(0.30f, 0.30f, 0.30f));
 
-        // ── Materials ─────────────────────────────────────────────────────
-        var floorMat  = GetOrCreateMat("Floor_Entry",  new Color(0.45f, 0.45f, 0.50f));
-        var wallMat   = GetOrCreateMat("Wall_Entry",   new Color(0.85f, 0.85f, 0.90f));
-        var portalMat = GetOrCreateMat("Portal_Frame", new Color(0.20f, 0.60f, 1.00f));
+        // Zen grey materials
+        var floorMat  = GetOrCreateMat("Floor_Entry",  new Color(0.78f, 0.78f, 0.78f));
+        var wallMat   = GetOrCreateMat("Wall_Entry",   new Color(0.84f, 0.84f, 0.84f));
+        var portalMat = GetOrCreateMat("Portal_Frame", new Color(0.72f, 0.72f, 0.72f));
 
-        // ── Room: 6 m wide × 8 m deep × 3 m high ─────────────────────────
+        // 6 × 8 × 3 m room
         AddFloor(Vector3.zero, 6f, 8f, floorMat);
         AddWalls(6f, 8f, 3f, wallMat);
 
-        // ── Portal archway (two side posts + top beam) ────────────────────
-        AddBox("Portal_PostLeft",  new Vector3(-1.0f, 1.5f, 3.8f), new Vector3(0.20f, 3.0f, 0.20f), portalMat);
-        AddBox("Portal_PostRight", new Vector3( 1.0f, 1.5f, 3.8f), new Vector3(0.20f, 3.0f, 0.20f), portalMat);
-        AddBox("Portal_TopBeam",   new Vector3( 0.0f, 3.1f, 3.8f), new Vector3(2.40f, 0.20f, 0.20f), portalMat);
+        // Subtle grey archway
+        AddBox("Portal_PostLeft",  new Vector3(-1.0f, 1.5f, 3.8f), new Vector3(0.18f, 3.0f, 0.18f), portalMat);
+        AddBox("Portal_PostRight", new Vector3( 1.0f, 1.5f, 3.8f), new Vector3(0.18f, 3.0f, 0.18f), portalMat);
+        AddBox("Portal_TopBeam",   new Vector3( 0.0f, 3.1f, 3.8f), new Vector3(2.20f, 0.18f, 0.18f), portalMat);
 
-        // ── Portal trigger (invisible; loads ZenPuzzleRoom on entry) ──────
-        var portalGO  = AddBox("ScenePortal", new Vector3(0f, 1.5f, 4.0f), new Vector3(1.8f, 3.0f, 0.4f), null);
-        portalGO.GetComponent<Renderer>().enabled = false;         // keep invisible
-        var col = portalGO.GetComponent<BoxCollider>();
+        // Portal trigger
+        var portalGO = AddBox("ScenePortal", new Vector3(0f, 1.5f, 4.0f), new Vector3(1.8f, 3.0f, 0.4f), null);
+        portalGO.GetComponent<Renderer>().enabled = false;
+        var col    = portalGO.GetComponent<BoxCollider>();
         col.isTrigger = true;
         var portal = portalGO.AddComponent<ScenePortal>();
         portal.targetSceneName = "ZenPuzzleRoom";
         portal.transitionDelay = 0.5f;
 
-        // ── XR Rig ────────────────────────────────────────────────────────
         SpawnXRRig(new Vector3(0f, 0f, -2f));
-
-        // ── Instructional sign (world-space canvas) ───────────────────────
         AddWorldText("EntranceSign", new Vector3(0f, 2.2f, 1.0f),
-                     "Walk through the glowing door\nto begin the puzzle");
+                     "Walk through the archway\nto begin the puzzle");
 
         EditorSceneManager.SaveScene(scene, k_EntryScene);
         Debug.Log($"[PuzzleSceneBuilder] Saved {k_EntryScene}");
@@ -127,85 +109,131 @@ public static class PuzzleSceneBuilder
     {
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-        // ── Lighting (warm, soft) ─────────────────────────────────────────
-        AddDirectionalLight(new Color(1.0f, 0.92f, 0.80f), 0.8f, Quaternion.Euler(50f, 20f, 0f));
-        SetAmbientFlat(new Color(0.25f, 0.22f, 0.20f));
+        // Soft neutral lighting — no warm tones, keeps grey surfaces truly grey
+        AddDirectionalLight(new Color(0.95f, 0.95f, 0.92f), 0.55f, Quaternion.Euler(55f, 25f, 0f));
+        SetAmbientFlat(new Color(0.32f, 0.32f, 0.32f));
 
-        // ── Materials ─────────────────────────────────────────────────────
-        var floorMat = GetOrCreateMat("Floor_Zen",  new Color(0.60f, 0.55f, 0.45f));
-        var wallMat  = GetOrCreateMat("Wall_Zen",   new Color(0.75f, 0.72f, 0.65f));
-        var tableMat = GetOrCreateMat("Table_Zen",  new Color(0.35f, 0.25f, 0.15f));
+        // Zen grey materials
+        var floorMat = GetOrCreateMat("Floor_Zen",  new Color(0.82f, 0.82f, 0.82f));
+        var wallMat  = GetOrCreateMat("Wall_Zen",   new Color(0.87f, 0.87f, 0.87f));
+        var tableMat = GetOrCreateMat("Table_Zen",  new Color(0.93f, 0.93f, 0.93f));
 
-        // ── Room: 8 × 8 × 3 m ────────────────────────────────────────────
+        // 8 × 8 × 3 m room
         AddFloor(Vector3.zero, 8f, 8f, floorMat);
         AddWalls(8f, 8f, 3f, wallMat);
 
-        // Central puzzle table
-        AddBox("PuzzleTable", new Vector3(0f, 0.5f, 0f), new Vector3(1.2f, 1.0f, 1.2f), tableMat);
+        // Central puzzle table  (top surface at y = 1.0)
+        AddBox("PuzzleTable", new Vector3(0f, 0.5f, 0f), new Vector3(1.4f, 1.0f, 1.4f), tableMat);
 
-        // ── XR Rig ────────────────────────────────────────────────────────
         SpawnXRRig(new Vector3(0f, 0f, -3f));
+
+        // ── Systems ───────────────────────────────────────────────────────
+        var colaGO = new GameObject("CognitiveLoadAdapter");
+        colaGO.AddComponent<CognitiveLoadAdapter>();
+
+        var phsGO = new GameObject("PieceHintSystem");
+        var phs   = phsGO.AddComponent<PieceHintSystem>();
 
         // ── Puzzle Manager ────────────────────────────────────────────────
         var pmGO = new GameObject("PuzzleManager");
         var pm   = pmGO.AddComponent<PuzzleManager>();
-        pm.easyMagnetic   = true;
-        pm.mediumMagnetic = false;
-        pm.hardMagnetic   = false;
+        pm.hintSystem = phs;
 
         var anchorGO = new GameObject("PuzzleAnchor");
-        anchorGO.transform.position = new Vector3(0f, 1.01f, 0f); // table surface
+        anchorGO.transform.position = new Vector3(0f, 1.01f, 0f);
         pm.puzzleAnchor = anchorGO.transform;
 
-        // ── Snowman figure: 7 pieces made from Unity primitives ───────────
-        //   Each row: (display name, primitive, solved world pos, solved euler, local scale, colour)
-        var defs = new (string n, PrimitiveType p, Vector3 pos, Vector3 euler, Vector3 scale, Color col)[]
+        // ── Snowman puzzle ────────────────────────────────────────────────
+        //   (n, primitive, world pos, euler, scale, colour)
+        var snowmanDefs = new (string n, PrimitiveType p, Vector3 pos, Vector3 euler, Vector3 scale, Color col)[]
         {
-            // ── Easy (first 3) ───────────────────────────────────────────
-            ("Body",     PrimitiveType.Sphere,   new Vector3( 0.00f, 1.35f, 0f), Vector3.zero,          new Vector3(0.40f, 0.50f, 0.40f), new Color(0.92f, 0.92f, 0.92f)),
-            ("Head",     PrimitiveType.Sphere,   new Vector3( 0.00f, 1.75f, 0f), Vector3.zero,          new Vector3(0.30f, 0.30f, 0.30f), new Color(0.96f, 0.96f, 0.96f)),
-            ("Hat",      PrimitiveType.Cylinder, new Vector3( 0.00f, 2.00f, 0f), Vector3.zero,          new Vector3(0.25f, 0.12f, 0.25f), new Color(0.12f, 0.08f, 0.04f)),
-            // ── Medium adds arms (first 5) ───────────────────────────────
-            ("LeftArm",  PrimitiveType.Cylinder, new Vector3(-0.45f, 1.45f, 0f), new Vector3(0f, 0f,  90f), new Vector3(0.10f, 0.28f, 0.10f), new Color(0.85f, 0.78f, 0.68f)),
-            ("RightArm", PrimitiveType.Cylinder, new Vector3( 0.45f, 1.45f, 0f), new Vector3(0f, 0f, -90f), new Vector3(0.10f, 0.28f, 0.10f), new Color(0.85f, 0.78f, 0.68f)),
-            // ── Hard adds legs (all 7) ────────────────────────────────────
-            ("LeftLeg",  PrimitiveType.Cylinder, new Vector3(-0.14f, 1.00f, 0f), new Vector3(0f, 0f,  10f), new Vector3(0.12f, 0.28f, 0.12f), new Color(0.90f, 0.90f, 0.90f)),
-            ("RightLeg", PrimitiveType.Cylinder, new Vector3( 0.14f, 1.00f, 0f), new Vector3(0f, 0f, -10f), new Vector3(0.12f, 0.28f, 0.12f), new Color(0.90f, 0.90f, 0.90f)),
+            // Easy (3)
+            ("Body",      PrimitiveType.Sphere,   new Vector3( 0.00f, 1.35f, 0f), Vector3.zero,           new Vector3(0.40f, 0.50f, 0.40f), new Color(0.92f, 0.92f, 0.92f)),
+            ("Head",      PrimitiveType.Sphere,   new Vector3( 0.00f, 1.75f, 0f), Vector3.zero,           new Vector3(0.30f, 0.30f, 0.30f), new Color(0.94f, 0.94f, 0.92f)),
+            ("Hat",       PrimitiveType.Cylinder, new Vector3( 0.00f, 2.00f, 0f), Vector3.zero,           new Vector3(0.25f, 0.12f, 0.25f), new Color(0.14f, 0.10f, 0.06f)),
+            // Medium adds arms (5)
+            ("LeftArm",   PrimitiveType.Cylinder, new Vector3(-0.45f, 1.45f, 0f), new Vector3(0f,  0f,  90f), new Vector3(0.09f, 0.28f, 0.09f), new Color(0.75f, 0.68f, 0.55f)),
+            ("RightArm",  PrimitiveType.Cylinder, new Vector3( 0.45f, 1.45f, 0f), new Vector3(0f,  0f, -90f), new Vector3(0.09f, 0.28f, 0.09f), new Color(0.75f, 0.68f, 0.55f)),
+            // Hard adds legs (7)
+            ("LeftLeg",   PrimitiveType.Cylinder, new Vector3(-0.14f, 1.02f, 0f), new Vector3(0f,  0f,  10f), new Vector3(0.12f, 0.28f, 0.12f), new Color(0.88f, 0.88f, 0.86f)),
+            ("RightLeg",  PrimitiveType.Cylinder, new Vector3( 0.14f, 1.02f, 0f), new Vector3(0f,  0f, -10f), new Vector3(0.12f, 0.28f, 0.12f), new Color(0.88f, 0.88f, 0.86f)),
         };
 
-        var snapRoot    = new GameObject("SnapZones");
-        pm.easyPieces   = new List<GameObject>();
-        pm.mediumPieces = new List<GameObject>();
-        pm.hardPieces   = new List<GameObject>();
+        var snapRootSnowman = new GameObject("SnapZones_Snowman");
+        BuildPuzzleSet("Snowman", snowmanDefs, snapRootSnowman.transform, pm, isSnowman: true);
 
-        for (int i = 0; i < defs.Length; i++)
+        // ── Robot puzzle ──────────────────────────────────────────────────
+        //   Assembled on the same anchor (only one set active at a time)
+        var robotDefs = new (string n, PrimitiveType p, Vector3 pos, Vector3 euler, Vector3 scale, Color col)[]
         {
-            var d = defs[i];
-            var (pieceGO, _) = MakePuzzlePiece(d.n, d.p, d.pos, d.euler, d.scale, d.col, snapRoot.transform);
+            // Easy (5): Head, Torso, LeftArm, RightArm, LeftLeg
+            ("Head",         PrimitiveType.Cube,     new Vector3( 0.00f, 1.90f,  0.00f), Vector3.zero,             new Vector3(0.26f, 0.26f, 0.22f), new Color(0.60f, 0.72f, 0.85f)),
+            ("Torso",        PrimitiveType.Cube,     new Vector3( 0.00f, 1.52f,  0.00f), Vector3.zero,             new Vector3(0.38f, 0.36f, 0.22f), new Color(0.55f, 0.65f, 0.75f)),
+            ("LeftArm",      PrimitiveType.Cylinder, new Vector3(-0.32f, 1.58f,  0.00f), new Vector3(0f, 0f,  80f), new Vector3(0.09f, 0.25f, 0.09f), new Color(0.62f, 0.68f, 0.72f)),
+            ("RightArm",     PrimitiveType.Cylinder, new Vector3( 0.32f, 1.58f,  0.00f), new Vector3(0f, 0f, -80f), new Vector3(0.09f, 0.25f, 0.09f), new Color(0.62f, 0.68f, 0.72f)),
+            ("LeftLeg",      PrimitiveType.Cylinder, new Vector3(-0.12f, 1.20f,  0.00f), Vector3.zero,             new Vector3(0.10f, 0.28f, 0.10f), new Color(0.50f, 0.52f, 0.55f)),
+            // Medium adds (8): + RightLeg, LeftForearm, RightForearm
+            ("RightLeg",     PrimitiveType.Cylinder, new Vector3( 0.12f, 1.20f,  0.00f), Vector3.zero,             new Vector3(0.10f, 0.28f, 0.10f), new Color(0.50f, 0.52f, 0.55f)),
+            ("LeftForearm",  PrimitiveType.Cylinder, new Vector3(-0.50f, 1.38f,  0.00f), new Vector3(0f, 0f,  65f), new Vector3(0.07f, 0.20f, 0.07f), new Color(0.58f, 0.62f, 0.65f)),
+            ("RightForearm", PrimitiveType.Cylinder, new Vector3( 0.50f, 1.38f,  0.00f), new Vector3(0f, 0f, -65f), new Vector3(0.07f, 0.20f, 0.07f), new Color(0.58f, 0.62f, 0.65f)),
+            // Hard adds (12): + LeftFoot, RightFoot, LeftEye, RightEye
+            ("LeftFoot",     PrimitiveType.Cube,     new Vector3(-0.12f, 0.97f,  0.06f), Vector3.zero,             new Vector3(0.16f, 0.07f, 0.24f), new Color(0.42f, 0.44f, 0.46f)),
+            ("RightFoot",    PrimitiveType.Cube,     new Vector3( 0.12f, 0.97f,  0.06f), Vector3.zero,             new Vector3(0.16f, 0.07f, 0.24f), new Color(0.42f, 0.44f, 0.46f)),
+            ("LeftEye",      PrimitiveType.Sphere,   new Vector3(-0.07f, 1.96f,  0.12f), Vector3.zero,             new Vector3(0.055f,0.055f,0.055f), new Color(0.08f, 0.08f, 0.10f)),
+            ("RightEye",     PrimitiveType.Sphere,   new Vector3( 0.07f, 1.96f,  0.12f), Vector3.zero,             new Vector3(0.055f,0.055f,0.055f), new Color(0.08f, 0.08f, 0.10f)),
+        };
 
-            pm.hardPieces.Add(pieceGO);               // all 7
-            if (i < 5) pm.mediumPieces.Add(pieceGO);  // first 5
-            if (i < 3) pm.easyPieces.Add(pieceGO);    // first 3
-        }
+        var snapRootRobot = new GameObject("SnapZones_Robot");
+        BuildPuzzleSet("Robot", robotDefs, snapRootRobot.transform, pm, isSnowman: false);
 
-        // ── Difficulty UI (world-space canvas, faces the player) ──────────
+        // ── Two-step Difficulty UI ────────────────────────────────────────
         BuildDifficultyCanvas(pm, new Vector3(0f, 1.8f, -1.8f));
 
-        // ── Completion banner ─────────────────────────────────────────────
-        AddWorldText("CompletionBanner", new Vector3(0f, 2.9f, 0f), "Assemble the snowman!");
+        // ── Ambient instruction text ──────────────────────────────────────
+        AddWorldText("RoomLabel", new Vector3(0f, 2.85f, -3.8f), "Assemble the puzzle");
 
         EditorSceneManager.SaveScene(scene, k_ZenScene);
         Debug.Log($"[PuzzleSceneBuilder] Saved {k_ZenScene}");
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // Puzzle piece factory
+    // Puzzle set builder — shared by both puzzle types
     // ════════════════════════════════════════════════════════════════════════
 
-    /// <summary>
-    /// Creates one puzzle piece GameObject and its matching snap zone target.
-    /// The piece starts at solvedPos; PuzzleManager.StartPuzzle() will scatter it.
-    /// </summary>
+    private static void BuildPuzzleSet(
+        string prefix,
+        (string n, PrimitiveType p, Vector3 pos, Vector3 euler, Vector3 scale, Color col)[] defs,
+        Transform snapRoot,
+        PuzzleManager pm,
+        bool isSnowman)
+    {
+        var allPieces = new List<GameObject>();
+
+        foreach (var d in defs)
+        {
+            var (pieceGO, _) = MakePuzzlePiece($"{prefix}_{d.n}", d.p, d.pos, d.euler, d.scale, d.col, snapRoot);
+            pieceGO.SetActive(false);   // inactive until player selects this puzzle
+            allPieces.Add(pieceGO);
+        }
+
+        if (isSnowman)
+        {
+            pm.snowmanHardPieces   = new List<GameObject>(allPieces);          // all 7
+            pm.snowmanMediumPieces = allPieces.GetRange(0, 5);                 // first 5
+            pm.snowmanEasyPieces   = allPieces.GetRange(0, 3);                 // first 3
+        }
+        else
+        {
+            pm.robotHardPieces   = new List<GameObject>(allPieces);            // all 12
+            pm.robotMediumPieces = allPieces.GetRange(0, 8);                   // first 8
+            pm.robotEasyPieces   = allPieces.GetRange(0, 5);                   // first 5
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Puzzle piece + snap zone factory
+    // ════════════════════════════════════════════════════════════════════════
+
     private static (GameObject piece, GameObject snapZone) MakePuzzlePiece(
         string pieceName, PrimitiveType prim,
         Vector3 solvedPos, Vector3 solvedEuler, Vector3 scale,
@@ -219,56 +247,51 @@ public static class PuzzleSceneBuilder
         go.transform.localScale = scale;
         go.GetComponent<Renderer>().material = GetOrCreateMat($"Piece_{pieceName}", pieceColor);
 
-        // Physics
         var rb = go.AddComponent<Rigidbody>();
         rb.mass          = 0.3f;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
 
-        // VR grab
         go.AddComponent<XRGrabInteractable>();
 
-        // Game logic
         var pp = go.AddComponent<PuzzlePiece>();
-        pp.magnetForce    = 5f;
-        pp.magnetRange    = 0.15f;
         pp.solveThreshold = 0.05f;
-        pp.solvedMaterial = GetOrCreateMat("Piece_Solved", new Color(0.30f, 1.00f, 0.40f));
+        pp.solvedMaterial = GetOrCreateMat("Piece_Solved", new Color(0.98f, 0.94f, 0.80f));
 
-        // ── Snap zone target ──────────────────────────────────────────────
+        // ── Snap zone ─────────────────────────────────────────────────────
         var snapGO = new GameObject($"SnapZone_{pieceName}");
         snapGO.transform.SetParent(snapRoot, worldPositionStays: true);
         snapGO.transform.position = solvedPos;
         snapGO.transform.rotation = Quaternion.Euler(solvedEuler);
+        snapGO.SetActive(false);    // hidden until puzzle starts
 
-        // Ghost mesh: semi-transparent duplicate of the piece
+        // Ghost mesh — semi-transparent copy of the piece geometry
         var ghost = GameObject.CreatePrimitive(prim);
         ghost.name = "Ghost";
         ghost.transform.SetParent(snapGO.transform, worldPositionStays: false);
         ghost.transform.localPosition = Vector3.zero;
         ghost.transform.localRotation = Quaternion.identity;
         ghost.transform.localScale    = scale;
-        Object.DestroyImmediate(ghost.GetComponent<Collider>());    // ghosts don't need physics
+        Object.DestroyImmediate(ghost.GetComponent<Collider>());
 
         var ghostRend = ghost.GetComponent<Renderer>();
         ghostRend.shadowCastingMode = ShadowCastingMode.Off;
         ghostRend.receiveShadows    = false;
+        ghostRend.material = GetOrCreateMat("Ghost_Idle", new Color(0.68f, 0.82f, 1.00f, 0.20f), transparent: true);
 
-        // MagneticSnapZone component wired to this piece
         var msz = snapGO.AddComponent<MagneticSnapZone>();
         msz.linkedPiece         = pp;
         msz.ghostRenderer       = ghostRend;
-        msz.ghostIdleMaterial   = GetOrCreateMat("Ghost_Idle",   new Color(0.60f, 0.80f, 1.0f, 0.25f), transparent: true);
-        msz.ghostActiveMaterial = GetOrCreateMat("Ghost_Active", new Color(0.40f, 0.90f, 1.0f, 0.50f), transparent: true);
+        msz.ghostIdleMaterial   = GetOrCreateMat("Ghost_Idle",   new Color(0.68f, 0.82f, 1.00f, 0.20f), transparent: true);
+        msz.ghostActiveMaterial = GetOrCreateMat("Ghost_Active", new Color(0.48f, 0.88f, 1.00f, 0.45f), transparent: true);
         msz.activationRange     = 0.15f;
 
-        // Cross-wire: piece knows where it should land
         pp.correctPlacementTarget = snapGO.transform;
 
         return (go, snapGO);
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // Difficulty UI canvas builder
+    // Two-step Difficulty UI canvas
     // ════════════════════════════════════════════════════════════════════════
 
     private static void BuildDifficultyCanvas(PuzzleManager pm, Vector3 worldPos)
@@ -277,49 +300,65 @@ public static class PuzzleSceneBuilder
         root.transform.position = worldPos;
         root.transform.rotation = Quaternion.identity;
 
-        var canvas       = root.AddComponent<Canvas>();
+        var canvas = root.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.WorldSpace;
         root.AddComponent<CanvasScaler>();
         root.AddComponent<GraphicRaycaster>();
 
-        var rootRT       = root.GetComponent<RectTransform>();
-        rootRT.sizeDelta  = new Vector2(600f, 400f);
-        rootRT.localScale = Vector3.one * 0.003f;   // 600 px canvas ≈ 1.8 m wide in world space
+        var rootRT = root.GetComponent<RectTransform>();
+        rootRT.sizeDelta  = new Vector2(620f, 480f);
+        rootRT.localScale = Vector3.one * 0.003f;   // ≈ 1.86 m wide in world space
 
-        // ── Background panel ──────────────────────────────────────────────
-        var panel = new GameObject("QuestionnairePanel");
-        panel.transform.SetParent(root.transform, false);
-        var panelRT = panel.AddComponent<RectTransform>();
-        panelRT.anchorMin = Vector2.zero;
-        panelRT.anchorMax = Vector2.one;
-        panelRT.offsetMin = panelRT.offsetMax = Vector2.zero;
-        panel.AddComponent<Image>().color = new Color(0.08f, 0.08f, 0.12f, 0.88f);
+        Color panelBg = new Color(0.10f, 0.10f, 0.12f, 0.90f);
 
-        // ── Title ─────────────────────────────────────────────────────────
-        MakeUIText(panel.transform, "Title", "Choose Difficulty",
-                   new Vector2(0f, 130f), new Vector2(550f, 60f), 36, Color.white);
+        // ── Step 1: Puzzle Type panel ─────────────────────────────────────
+        var typePanel = MakePanel(root.transform, "PuzzleTypePanel", panelBg);
 
-        // ── Difficulty buttons ────────────────────────────────────────────
-        var easyBtn   = MakeUIButton(panel.transform, "EasyBtn",   "Easy",
-                                     new Vector2(-180f, 0f), new Color(0.30f, 0.80f, 0.30f));
-        var mediumBtn = MakeUIButton(panel.transform, "MediumBtn", "Medium",
-                                     new Vector2(   0f, 0f), new Color(0.90f, 0.75f, 0.20f));
-        var hardBtn   = MakeUIButton(panel.transform, "HardBtn",   "Hard",
-                                     new Vector2( 180f, 0f), new Color(0.85f, 0.25f, 0.25f));
+        MakeUIText(typePanel.transform, "Title", "Choose Puzzle",
+                   new Vector2(0f, 160f), new Vector2(560f, 60f), 34, Color.white);
 
-        // ── Feedback label (DifficultyUI updates this at runtime) ─────────
-        var selectedLabel = MakeUIText(panel.transform, "SelectedLabel", "",
-                                       new Vector2(0f, -110f), new Vector2(550f, 50f), 22,
-                                       new Color(0.9f, 0.9f, 0.9f));
+        var snowmanBtn = MakeUIButton(typePanel.transform, "SnowmanBtn", "Snowman",
+                                      new Vector2(-140f, 40f), new Color(0.78f, 0.78f, 0.80f));
+        var robotBtn   = MakeUIButton(typePanel.transform, "RobotBtn",   "Robot",
+                                      new Vector2( 140f, 40f), new Color(0.55f, 0.68f, 0.82f));
 
-        // ── Wire up DifficultyUI ──────────────────────────────────────────
+        MakeUIText(typePanel.transform, "SubLabel", "Simple (3–7 pieces)  |  Complex (5–12 pieces)",
+                   new Vector2(0f, -60f), new Vector2(560f, 40f), 18, new Color(0.7f, 0.7f, 0.7f));
+
+        // ── Step 2: Difficulty panel ──────────────────────────────────────
+        var diffPanel = MakePanel(root.transform, "DifficultyPanel", panelBg);
+        diffPanel.SetActive(false);
+
+        MakeUIText(diffPanel.transform, "Title", "Choose Difficulty",
+                   new Vector2(0f, 160f), new Vector2(560f, 60f), 34, Color.white);
+
+        var easyBtn   = MakeUIButton(diffPanel.transform, "EasyBtn",   "Easy",
+                                      new Vector2(-190f, 40f), new Color(0.72f, 0.72f, 0.72f));
+        var mediumBtn = MakeUIButton(diffPanel.transform, "MediumBtn", "Medium",
+                                      new Vector2(   0f, 40f), new Color(0.60f, 0.60f, 0.62f));
+        var hardBtn   = MakeUIButton(diffPanel.transform, "HardBtn",   "Hard",
+                                      new Vector2( 190f, 40f), new Color(0.48f, 0.48f, 0.50f));
+
+        MakeUIText(diffPanel.transform, "HintLabel",
+                   "Easy: guided    Medium: subtle    Hard: on your own",
+                   new Vector2(0f, -60f), new Vector2(560f, 40f), 17, new Color(0.65f, 0.65f, 0.65f));
+
+        // ── Shared status label ────────────────────────────────────────────
+        var statusLabel = MakeUIText(root.transform, "StatusLabel", "",
+                                     new Vector2(0f, -200f), new Vector2(580f, 44f), 20,
+                                     new Color(0.85f, 0.85f, 0.85f));
+
+        // ── Wire DifficultyUI component ────────────────────────────────────
         var diffUI = root.AddComponent<DifficultyUI>();
-        diffUI.easyButton              = easyBtn;
-        diffUI.mediumButton            = mediumBtn;
-        diffUI.hardButton              = hardBtn;
-        diffUI.questionnairePanel      = panel;
-        diffUI.selectedDifficultyLabel = selectedLabel;
-        diffUI.puzzleManager           = pm;
+        diffUI.puzzleTypePanel  = typePanel;
+        diffUI.difficultyPanel  = diffPanel;
+        diffUI.snowmanButton    = snowmanBtn;
+        diffUI.robotButton      = robotBtn;
+        diffUI.easyButton       = easyBtn;
+        diffUI.mediumButton     = mediumBtn;
+        diffUI.hardButton       = hardBtn;
+        diffUI.statusLabel      = statusLabel;
+        diffUI.puzzleManager    = pm;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -328,7 +367,7 @@ public static class PuzzleSceneBuilder
 
     private static void AddDirectionalLight(Color color, float intensity, Quaternion rotation)
     {
-        var go    = new GameObject("Directional Light");
+        var go = new GameObject("Directional Light");
         go.transform.rotation = rotation;
         var light = go.AddComponent<Light>();
         light.type      = LightType.Directional;
@@ -342,8 +381,6 @@ public static class PuzzleSceneBuilder
         RenderSettings.ambientLight = color;
     }
 
-    /// <param name="roomW">Full width in metres.</param>
-    /// <param name="roomD">Full depth in metres.</param>
     private static void AddFloor(Vector3 center, float roomW, float roomD, Material mat)
     {
         var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -358,7 +395,6 @@ public static class PuzzleSceneBuilder
         float hw = roomW / 2f + 0.1f;
         float hd = roomD / 2f + 0.1f;
         float hy = wallH / 2f;
-
         AddBox("Wall_North", new Vector3(  0,  hy,  hd), new Vector3(roomW + 0.2f, wallH, 0.2f), mat);
         AddBox("Wall_South", new Vector3(  0,  hy, -hd), new Vector3(roomW + 0.2f, wallH, 0.2f), mat);
         AddBox("Wall_East",  new Vector3( hw,  hy,   0), new Vector3(0.2f, wallH, roomD + 0.2f), mat);
@@ -385,26 +421,39 @@ public static class PuzzleSceneBuilder
         }
         else
         {
-            Debug.LogWarning($"[PuzzleSceneBuilder] XR Rig prefab not found at:\n  {k_XRRigPrefab}\n  → Add 'Complete XR Origin Set Up Variant' manually.");
+            Debug.LogWarning($"[PuzzleSceneBuilder] XR Rig prefab not found:\n  {k_XRRigPrefab}");
         }
     }
 
     private static void AddWorldText(string goName, Vector3 pos, string text)
     {
-        var go    = new GameObject(goName);
+        var go = new GameObject(goName);
         go.transform.position = pos;
-        var c     = go.AddComponent<Canvas>();
+        var c  = go.AddComponent<Canvas>();
         c.renderMode = RenderMode.WorldSpace;
         go.AddComponent<CanvasScaler>();
-        var rt    = go.GetComponent<RectTransform>();
-        rt.sizeDelta  = new Vector2(600f, 120f);
+        var rt = go.GetComponent<RectTransform>();
+        rt.sizeDelta  = new Vector2(600f, 100f);
         rt.localScale = Vector3.one * 0.003f;
-        MakeUIText(go.transform, "Label", text, Vector2.zero, new Vector2(580f, 110f), 28, Color.white);
+        MakeUIText(go.transform, "Label", text, Vector2.zero, new Vector2(580f, 90f), 26,
+                   new Color(0.55f, 0.55f, 0.55f));
     }
 
     // ════════════════════════════════════════════════════════════════════════
     // UI helpers
     // ════════════════════════════════════════════════════════════════════════
+
+    private static GameObject MakePanel(Transform parent, string name, Color bgColor)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        var rt = go.AddComponent<RectTransform>();
+        rt.anchorMin = Vector2.zero;
+        rt.anchorMax = Vector2.one;
+        rt.offsetMin = rt.offsetMax = Vector2.zero;
+        go.AddComponent<Image>().color = bgColor;
+        return go;
+    }
 
     private static TextMeshProUGUI MakeUIText(Transform parent, string name, string text,
         Vector2 anchoredPos, Vector2 size, int fontSize, Color color)
@@ -428,13 +477,13 @@ public static class PuzzleSceneBuilder
         var go  = new GameObject(name);
         go.transform.SetParent(parent, false);
         var rt  = go.AddComponent<RectTransform>();
-        rt.sizeDelta        = new Vector2(160f, 70f);
+        rt.sizeDelta        = new Vector2(160f, 72f);
         rt.anchoredPosition = anchoredPos;
         var img = go.AddComponent<Image>();
         img.color = bgColor;
         var btn = go.AddComponent<Button>();
         btn.targetGraphic = img;
-        MakeUIText(go.transform, "Label", label, Vector2.zero, new Vector2(150f, 60f), 24, Color.white);
+        MakeUIText(go.transform, "Label", label, Vector2.zero, new Vector2(150f, 62f), 24, Color.white);
         return btn;
     }
 
@@ -442,7 +491,6 @@ public static class PuzzleSceneBuilder
     // Material helper
     // ════════════════════════════════════════════════════════════════════════
 
-    /// <summary>Loads an existing material asset, or creates and saves a new one.</summary>
     private static Material GetOrCreateMat(string matName, Color color, bool transparent = false)
     {
         var path = $"{k_MatDir}/{matName}.mat";
@@ -450,18 +498,17 @@ public static class PuzzleSceneBuilder
         if (mat != null) return mat;
 
         var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-        mat        = new Material(shader) { name = matName };
+        mat = new Material(shader) { name = matName };
 
         if (transparent)
         {
-            // URP transparent surface type
-            mat.SetFloat("_Surface",   1f);   // 0 = Opaque, 1 = Transparent
-            mat.SetFloat("_Blend",     0f);   // Alpha blend
+            mat.SetFloat("_Surface",   1f);
+            mat.SetFloat("_Blend",     0f);
             mat.SetFloat("_AlphaClip", 0f);
             mat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
             mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
             mat.SetInt("_ZWrite",   0);
-            mat.renderQueue = 3000;           // RenderQueue.Transparent
+            mat.renderQueue = 3000;
             mat.SetOverrideTag("RenderType", "Transparent");
             mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
         }
@@ -472,25 +519,18 @@ public static class PuzzleSceneBuilder
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // Build Settings helper
+    // Build Settings + folder helpers
     // ════════════════════════════════════════════════════════════════════════
 
     private static void AddScenesToBuildSettings(params string[] scenePaths)
     {
         var existing = new List<EditorBuildSettingsScene>(EditorBuildSettings.scenes);
         foreach (var path in scenePaths)
-        {
             if (!existing.Exists(s => s.path == path))
                 existing.Add(new EditorBuildSettingsScene(path, true));
-        }
         EditorBuildSettings.scenes = existing.ToArray();
     }
 
-    // ════════════════════════════════════════════════════════════════════════
-    // Folder utility
-    // ════════════════════════════════════════════════════════════════════════
-
-    /// <summary>Recursively ensures every folder in the path exists as a Unity asset folder.</summary>
     private static void EnsureFolderPath(string path)
     {
         var parts   = path.Split('/');

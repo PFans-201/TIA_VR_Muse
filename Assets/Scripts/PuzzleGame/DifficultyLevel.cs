@@ -1,13 +1,15 @@
-using System.Collections.Generic;
-using UnityEngine;
+/// Shared enums — used across DifficultyUI, PuzzleManager, PieceHintSystem.
+/// Keep in one file so all scripts can reference without circular dependencies.
 
-/// <summary>
-/// Shared enum for difficulty levels — used by DifficultyUI, PuzzleManager, PuzzlePiece.
-/// Keep this in its own file so all scripts can reference it without circular dependencies.
-/// </summary>
 public enum DifficultyLevel
 {
     Easy,
     Medium,
     Hard
+}
+
+public enum PuzzleType
+{
+    Snowman,   // Simple: 3 / 5 / 7 pieces
+    Robot      // Complex: 5 / 8 / 12 pieces
 }
