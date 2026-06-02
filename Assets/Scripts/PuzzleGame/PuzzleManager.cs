@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -85,6 +86,20 @@ public class PuzzleManager : MonoBehaviour
 
     private List<GameObject> _activePieces = new();
     private int              _solvedCount;
+
+    /// Fired when the player completes a puzzle — DifficultyUI listens to unlock the next level.
+    public event Action<PuzzleType, DifficultyLevel> OnPuzzleCompleted;
+
+    // ── Unity lifecycle ───────────────────────────────────────────────────────
+
+    private void Awake()
+    {
+        // Hide every piece and snap zone immediately — before the first frame renders.
+        // This fixes the issue where pieces were visible before difficulty selection.
+        SetGroupActive(snowmanHardPieces, false);
+        SetGroupActive(robotHardPieces,   false);
+        HideAllSnapZones();
+    }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -190,6 +205,7 @@ public class PuzzleManager : MonoBehaviour
         // TODO: Trigger celebration FX — confetti particle system, completion sound,
         //       "Well done!" UI panel. The Confetti prefab in VRTemplateAssets/Prefabs
         //       can be instantiated here.
+        OnPuzzleCompleted?.Invoke(_currentPuzzleType, _currentDifficulty);
     }
 
     private void SetGroupActive(List<GameObject> group, bool active)
