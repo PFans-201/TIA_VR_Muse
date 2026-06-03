@@ -246,7 +246,7 @@ def main():
             print(f"{elapsed:7.1f}s   {theta_z:+10.3f}  {alpha_z:+10.3f}  "
                   f"{cli:+8.3f}  {smoothed_stress:8.3f}  {optical_str}")
 
-        print(f"\n[OK] Session complete.")
+        print("\n[OK] Session complete.")
 
     except KeyboardInterrupt:
         print("\n[INFO] Stopped by user.")
