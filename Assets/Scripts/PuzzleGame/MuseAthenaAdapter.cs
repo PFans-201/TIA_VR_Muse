@@ -130,6 +130,10 @@ public class MuseAthenaAdapter : MonoBehaviour
 
     // ── Read-only debug display ───────────────────────────────────────────────
 
+    // These are serialized purely for the Inspector debug readout. In stub mode
+    // (MUSE_BRAINFLOW undefined) some are only assigned via their initializer and
+    // never read, which is intentional — suppress the "assigned but never used" warning.
+#pragma warning disable 0414
     [Header("Live Readings (Play Mode — read-only)")]
     [SerializeField] private string _connectionStatus = "Idle";
     [SerializeField] private string _phase            = "—";
@@ -139,6 +143,7 @@ public class MuseAthenaAdapter : MonoBehaviour
     [SerializeField] private float  _cognitiveLoadIndex; // combined, z-scored
     [SerializeField] private float  _stressLevel;        // final 0–1 output
     [SerializeField] private float  _opticalMagnitude;   // infrared PPG magnitude
+#pragma warning restore 0414
 
 #if MUSE_BRAINFLOW
 
@@ -468,6 +473,14 @@ public class MuseAthenaAdapter : MonoBehaviour
     }
 
 #else   // ── Stub when MUSE_BRAINFLOW is not defined ──────────────────────────
+
+    // Mirror the public data surface of the real (BrainFlow) implementation so
+    // dependent scripts (e.g. TutorialManager) compile without the plugin installed.
+    // Without a device these stay inert: HasValidData is always false, so baseline
+    // collection is skipped and the adapter reports no readings.
+    public double[] LatestBandPowers { get; private set; }
+    public bool     HasValidData     { get; private set; }
+    public void OverrideBaseline(double[] mean, double[] std) { /* no-op without BrainFlow */ }
 
     private void Start()
     {

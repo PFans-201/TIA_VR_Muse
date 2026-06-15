@@ -17,8 +17,6 @@ using TMPro;
 public class DifficultyUI : MonoBehaviour
 {
     [Header("Progression")]
-    [Tooltip("Sequential: Easy → Medium → Hard unlocks progressively.\n" +
-             "FreeChoice: all difficulties available from the start.")]
     [Tooltip("FreeChoice (default): all difficulties selectable immediately — difficulty expresses\n" +
              "how much baseline assistance the player wants. The adaptive system will adjust\n" +
              "further based on MUSE S readings regardless of this initial choice.\n\n" +

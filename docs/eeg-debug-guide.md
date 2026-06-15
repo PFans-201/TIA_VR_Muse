@@ -21,6 +21,7 @@ You only need to do this once. The MAC address does not change between sessions.
 
 ```bash
 bluetoothctl
+[bluetoothctl] power on      # REQUIRED — power the controller before scanning
 [bluetoothctl] scan on
 # Wait for a line like:
 #   [NEW] Device D4:22:CD:00:AA:BB Muse-S-AB
@@ -29,9 +30,26 @@ bluetoothctl
 [bluetoothctl] exit
 ```
 
+> **Always run `power on` first.** Going straight to `scan on` on a controller that
+> isn't powered yet fails with:
+> ```
+> SetDiscoveryFilter failed: org.bluez.Error.NotReady
+> Failed to start discovery: org.bluez.Error.NotReady
+> ```
+> `NotReady` means the adapter is not powered/initialized. Fix it with:
+> ```bash
+> rfkill unblock bluetooth
+> sudo systemctl restart bluetooth
+> bluetoothctl power on
+> # if it still fails, power-cycle the controller:
+> sudo btmgmt power off && sudo btmgmt power on
+> ```
+
 > If nothing appears after 30 s, try turning the headset off and on.
 > The Muse S enters pairing/advertising mode automatically when powered on.
 > You do NOT need to pair it in bluetoothctl — BrainFlow handles the connection itself.
+> In fact, **do not** pair/connect it here: a system-level connection grabs the BLE
+> link and prevents BrainFlow from opening the device.
 
 **Windows**
 
