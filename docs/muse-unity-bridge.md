@@ -94,6 +94,115 @@ Ports: bridge→Unity stress on **5005**, Unity→bridge commands on **5006**
 (`MuseUdpAdapter.port` / `controlPort`, `muse_bridge.py --udp-port` / `--control-port`).
 Other commands: `reset` returns the bridge to idle to recalibrate.
 
+## Running on a Meta Quest over WiFi (PC bridge)
+
+The Quest is standalone Android and can't run the Python bridge itself, so for a
+Quest build the bridge stays on a **PC** (with the Muse connected to the PC over BLE)
+and streams to the headset over the local network. Put the PC and Quest on the **same
+WiFi/LAN**, then:
+
+1. Find both IPs (`PC_IP`, `QUEST_IP`) — e.g. `ip addr` on Linux, and on the Quest
+   under *Settings → WiFi → (your network) → Advanced*.
+2. On the PC, point the bridge at the Quest:
+
+   ```bash
+   .venv/bin/python Tools/muse_bridge.py --unity --udp-host <QUEST_IP>
+   ```
+
+3. On the `MuseUdpAdapter` GameObject (in the Quest build), set
+   **Bridge Host = `<PC_IP>`** (so its baseline control commands reach the bridge).
+   `port` 5005 and `controlPort` 5006 stay the same.
+4. Allow UDP through the PC firewall: inbound **5006** (control) and outbound **5005**
+   (stress). The Quest receives on 5005.
+
+This is the simplest way to get the full game-on-Quest loop working, but it keeps a
+PC in the loop. For a fully standalone headset, see *Direct BLE on Quest* below.
+
+## Direct BLE on Quest (standalone)
+
+To drop the PC entirely, the Quest connects to the Muse over BLE itself and runs the
+same decode + DSP in C#. The hard parts are **done and validated**:
+
+- `MuseSignalProcessor.cs` — the FFT + band powers + dual-baseline + stress, a port
+  of the Python that matches it to floating-point precision (cross-checked offline).
+- `MuseDirectAdapter.cs` — connects, decodes 20-byte packets (6 × 12-bit
+  `(raw − 0x800) × 125/256` µV @ 256 Hz), feeds the processor, and exposes the **same
+  surface as `MuseUdpAdapter`** (`StressLevel`/`Phase`, feeds `CognitiveLoadAdapter`)
+  plus the same `IMuseBaselineControl` methods, so `TutorialManager` and everything
+  downstream are unchanged.
+- `IMuseBleTransport.cs` — the one seam between the adapter and whatever BLE plugin
+  you use, so the adapter stays plugin-agnostic.
+
+What remains is the **BLE transport** for Android/Quest. Steps:
+
+### 1. Add a BLE plugin
+
+Install the free [Velorexe Unity-Android-Bluetooth-Low-Energy](https://github.com/Velorexe/Unity-Android-Bluetooth-Low-Energy)
+(MIT) into the project.
+
+### 2. Android permissions
+
+The Quest runs Android. Add to the Android manifest (Project Settings → Player →
+Publishing Settings → Custom Main Manifest, or the plugin's manifest):
+
+```xml
+<uses-permission android:name="android.permission.BLUETOOTH" />
+<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+```
+
+Request the runtime permissions (`BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, and on
+older Android `ACCESS_FINE_LOCATION`) at startup before scanning.
+
+### 3. Implement IMuseBleTransport
+
+Write one small `MonoBehaviour` that implements `IMuseBleTransport` by calling the
+plugin (verify the exact method/callback names against the installed version):
+
+```csharp
+using System;
+using UnityEngine;
+
+public class VelorexeBleTransport : MonoBehaviour, IMuseBleTransport
+{
+    public void StartScan(string nameContains, Action<string> onFound)
+    {
+        // BleManager: start scanning; on each result, if device.Name contains
+        // nameContains (case-insensitive), stop scanning and onFound(device.Address).
+    }
+    public void Connect(string deviceId, Action onConnected, Action onDisconnected)
+    {
+        // BleManager.Connect(deviceId); fire onConnected on the connected callback,
+        // onDisconnected on the disconnect callback.
+    }
+    public void Subscribe(string serviceUuid, string characteristicUuid, Action<byte[]> onData)
+    {
+        // Subscribe/SetNotify on (serviceUuid, characteristicUuid); forward each
+        // notification's byte[] to onData. (Marshal to main thread if needed.)
+    }
+    public void WriteCommand(string serviceUuid, string characteristicUuid, byte[] data)
+    {
+        // Write without response to (serviceUuid, characteristicUuid).
+    }
+    public void Disconnect() { /* BleManager.Disconnect(...) */ }
+}
+```
+
+### 4. Swap the adapter in the scene
+
+On the persistent EEG GameObject (where `MuseUdpAdapter` lives), for a Quest build
+use **`MuseDirectAdapter` + `VelorexeBleTransport`** instead of `MuseUdpAdapter`.
+Both feed `CognitiveLoadAdapter` and both implement `IMuseBaselineControl`, so
+`TutorialManager` drives the same rest + active-VR baseline either way — no other
+changes. (Update `PuzzleSceneBuilder` once the transport is verified on-device.)
+
+### Validate on the headset
+
+Compare `MuseDirectAdapter`'s live stress against `muse_bridge.py --no-udp` on the
+same session — they share the identical DSP, so the numbers should track closely.
+
 ## How it maps to the old design
 
 | Old (BrainFlow)            | New (bridge)                                   |

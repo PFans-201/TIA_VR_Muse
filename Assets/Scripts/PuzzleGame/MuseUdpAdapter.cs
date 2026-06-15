@@ -24,7 +24,7 @@ using UnityEngine;
 ///      pushes readings into whichever CognitiveLoadAdapter is active.
 ///   The Python baseline phase sends stress=0.5, so the game stays neutral until the
 ///   wearer's baseline is captured, then live values flow.
-public class MuseUdpAdapter : MonoBehaviour
+public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
 {
     public static MuseUdpAdapter Instance { get; private set; }
 
@@ -77,6 +77,13 @@ public class MuseUdpAdapter : MonoBehaviour
             Debug.LogWarning($"[MuseUdpAdapter] control send failed: {e.Message}");
         }
     }
+
+    // ── IMuseBaselineControl — forwarded to the Python bridge over UDP ─────────
+    public void StartRestBaseline()   => SendCommand("baseline_rest_start");
+    public void StopRestBaseline()    => SendCommand("baseline_rest_stop");
+    public void StartActiveBaseline() => SendCommand("baseline_active_start");
+    public void FinalizeBaseline()    => SendCommand("baseline_active_stop");
+    public void ResetBaseline()       => SendCommand("reset");
 
     [Serializable]
     private struct Reading
