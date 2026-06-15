@@ -121,7 +121,8 @@ PC in the loop. For a fully standalone headset, see *Direct BLE on Quest* below.
 ## Direct BLE on Quest (standalone)
 
 To drop the PC entirely, the Quest connects to the Muse over BLE itself and runs the
-same decode + DSP in C#. The hard parts are **done and validated**:
+same decode + DSP in C#. **This is now implemented end-to-end** — you only build and
+test on-device. The pieces:
 
 - `MuseSignalProcessor.cs` — the FFT + band powers + dual-baseline + stress, a port
   of the Python that matches it to floating-point precision (cross-checked offline).
@@ -130,78 +131,66 @@ same decode + DSP in C#. The hard parts are **done and validated**:
   surface as `MuseUdpAdapter`** (`StressLevel`/`Phase`, feeds `CognitiveLoadAdapter`)
   plus the same `IMuseBaselineControl` methods, so `TutorialManager` and everything
   downstream are unchanged.
-- `IMuseBleTransport.cs` — the one seam between the adapter and whatever BLE plugin
-  you use, so the adapter stays plugin-agnostic.
+- `IMuseBleTransport.cs` — the one seam between the adapter and the BLE plugin.
+- **`VelorexeBleTransport.cs`** — the concrete transport, written against the real
+  [Velorexe Unity-Android-Bluetooth-Low-Energy](https://github.com/Velorexe/Unity-Android-Bluetooth-Low-Energy)
+  (MIT) API.
+- **`Packages/com.velorexe.androidbluetoothlowenergy/`** — the plugin itself, vendored
+  as an embedded UPM package (so it's pinned and committed, no manual import).
 
-What remains is the **BLE transport** for Android/Quest. Steps:
+### What's already done
 
-### 1. Add a BLE plugin
+1. **Plugin installed** — embedded under `Packages/`. Unity picks it up on open and
+   resolves its dependencies (`android-logcat`, `ugui`, `androidjni`) automatically.
+2. **Permissions** — the package's `Plugins/Android/AndroidManifest.xml` is a
+   permissions-only *merge* manifest carrying the full Muse-on-Quest set
+   (`BLUETOOTH`/`BLUETOOTH_ADMIN` + `ACCESS_FINE_LOCATION` for API ≤ 30,
+   `BLUETOOTH_SCAN`/`BLUETOOTH_CONNECT` for API ≥ 31). `VelorexeBleTransport` requests
+   the runtime (dangerous) ones at startup before scanning.
+3. **Transport implemented** — `VelorexeBleTransport` maps `IMuseBleTransport` onto the
+   plugin's command queue: `DiscoverDevices` (match by name) → `ConnectToDevice` →
+   `SubscribeToCharacteristic` / `WriteToCharacteristic`. The Muse uses full 128-bit
+   UUIDs, so every subscribe/write goes through the plugin's `customGatt: true` path
+   (which base64-encodes the raw bytes through to Java, preserving the binary start
+   commands). It also marks the auto-created `BleManager` `DontDestroyOnLoad` so the
+   link survives the tutorial→puzzle scene change. It is a **no-op in the Editor**
+   (the plugin is JNI-only) — use `MuseUdpAdapter` + the Python bridge there.
 
-Install the free [Velorexe Unity-Android-Bluetooth-Low-Energy](https://github.com/Velorexe/Unity-Android-Bluetooth-Low-Energy)
-(MIT) into the project.
+### What you do (on-device)
 
-### 2. Android permissions
+1. **Open the project** in Unity — it imports the embedded package.
+2. **Switch the platform to Android** (File → Build Settings → Android → Switch
+   Platform).
+3. **Open a built scene** (`TutorialRoom`, then `ZenPuzzleRoom`) and run menu
+   **Puzzle Game → Enable Direct BLE on Quest (current scene)**. This adds a
+   `MuseDirectAdapter` + `VelorexeBleTransport` GameObject wired to the scene's
+   `CognitiveLoadAdapter` and disables `MuseUdpAdapter` (so they don't both drive
+   stress). Run it on **both** scenes that have the EEG GameObject. It's reversible —
+   delete the `MuseDirectAdapter` object and re-enable `MuseUdpAdapter` to go back to
+   the PC bridge.
+4. **Build And Run** on the Quest (developer mode + USB; accept the on-headset BLE
+   permission prompts the first time).
 
-The Quest runs Android. Add to the Android manifest (Project Settings → Player →
-Publishing Settings → Custom Main Manifest, or the plugin's manifest):
-
-```xml
-<uses-permission android:name="android.permission.BLUETOOTH" />
-<uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-<uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
-<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-```
-
-Request the runtime permissions (`BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, and on
-older Android `ACCESS_FINE_LOCATION`) at startup before scanning.
-
-### 3. Implement IMuseBleTransport
-
-Write one small `MonoBehaviour` that implements `IMuseBleTransport` by calling the
-plugin (verify the exact method/callback names against the installed version):
-
-```csharp
-using System;
-using UnityEngine;
-
-public class VelorexeBleTransport : MonoBehaviour, IMuseBleTransport
-{
-    public void StartScan(string nameContains, Action<string> onFound)
-    {
-        // BleManager: start scanning; on each result, if device.Name contains
-        // nameContains (case-insensitive), stop scanning and onFound(device.Address).
-    }
-    public void Connect(string deviceId, Action onConnected, Action onDisconnected)
-    {
-        // BleManager.Connect(deviceId); fire onConnected on the connected callback,
-        // onDisconnected on the disconnect callback.
-    }
-    public void Subscribe(string serviceUuid, string characteristicUuid, Action<byte[]> onData)
-    {
-        // Subscribe/SetNotify on (serviceUuid, characteristicUuid); forward each
-        // notification's byte[] to onData. (Marshal to main thread if needed.)
-    }
-    public void WriteCommand(string serviceUuid, string characteristicUuid, byte[] data)
-    {
-        // Write without response to (serviceUuid, characteristicUuid).
-    }
-    public void Disconnect() { /* BleManager.Disconnect(...) */ }
-}
-```
-
-### 4. Swap the adapter in the scene
-
-On the persistent EEG GameObject (where `MuseUdpAdapter` lives), for a Quest build
-use **`MuseDirectAdapter` + `VelorexeBleTransport`** instead of `MuseUdpAdapter`.
-Both feed `CognitiveLoadAdapter` and both implement `IMuseBaselineControl`, so
-`TutorialManager` drives the same rest + active-VR baseline either way — no other
-changes. (Update `PuzzleSceneBuilder` once the transport is verified on-device.)
+`TutorialManager` auto-prefers `MuseDirectAdapter.Instance` for the rest + active-VR
+baselines, so nothing else changes.
 
 ### Validate on the headset
 
 Compare `MuseDirectAdapter`'s live stress against `muse_bridge.py --no-udp` on the
 same session — they share the identical DSP, so the numbers should track closely.
+
+### If a build/runtime issue shows up
+
+- **Manifest merge / duplicate launcher** — the vendored package manifest is
+  permissions-only by design (the upstream launcher `<activity>` was removed) so it
+  merges cleanly with the XR main manifest. If you re-import the upstream package,
+  re-apply that trim.
+- **No devices found** — confirm the runtime permission prompts were accepted
+  (Settings → Apps → your app → Permissions: Nearby devices / Location), and that the
+  headset LED is pulsing.
+- **Plugin API drift** — `VelorexeBleTransport` targets the vendored version's API. If
+  you bump the package, re-check `DiscoverDevices` / `ConnectToDevice` /
+  `SubscribeToCharacteristic` / `WriteToCharacteristic` signatures.
 
 ## How it maps to the old design
 

@@ -70,6 +70,46 @@ public static class PuzzleSceneBuilder
         AssetDatabase.Refresh();
     }
 
+    /// Converts the CURRENTLY OPEN scene from the UDP bridge source (Mode A/B) to the
+    /// on-device direct-BLE source (Mode C, standalone Quest): adds a persistent
+    /// GameObject with MuseDirectAdapter + VelorexeBleTransport wired to the same
+    /// CognitiveLoadAdapter, and disables MuseUdpAdapter so they don't both drive
+    /// stress. TutorialManager auto-prefers the direct adapter for baselines, so no
+    /// other wiring changes. Run this on TutorialRoom AND ZenPuzzleRoom, then build
+    /// for Android. (Reversible: delete the MuseDirectAdapter object and re-enable
+    /// MuseUdpAdapter to go back to the PC bridge.)
+    [MenuItem("Puzzle Game/Enable Direct BLE on Quest (current scene)")]
+    public static void EnableDirectBleInCurrentScene()
+    {
+        var cola = Object.FindFirstObjectByType<CognitiveLoadAdapter>();
+        if (cola == null)
+        {
+            Debug.LogError("[PuzzleSceneBuilder] No CognitiveLoadAdapter in the open scene. " +
+                           "Open a built scene (TutorialRoom or ZenPuzzleRoom) first.");
+            return;
+        }
+        if (Object.FindFirstObjectByType<MuseDirectAdapter>() != null)
+        {
+            Debug.Log("[PuzzleSceneBuilder] Direct-BLE already enabled in this scene.");
+            return;
+        }
+
+        var udp = Object.FindFirstObjectByType<MuseUdpAdapter>();
+        if (udp != null) udp.enabled = false;   // stop the UDP source feeding stress too
+
+        var go     = new GameObject("MuseDirectAdapter");
+        var direct = go.AddComponent<MuseDirectAdapter>();
+        go.AddComponent<VelorexeBleTransport>();
+        direct.cognitiveLoad      = cola;
+        direct.deviceNameContains = "Muse";
+
+        EditorSceneManager.MarkSceneDirty(go.scene);
+        EditorSceneManager.SaveOpenScenes();
+        Debug.Log("[PuzzleSceneBuilder] Direct BLE enabled: added MuseDirectAdapter + " +
+                  "VelorexeBleTransport, disabled MuseUdpAdapter. Switch the platform to " +
+                  "Android and Build And Run on the Quest.");
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // SCENE: Entry Hall  (calm, minimal, grey)
     // ════════════════════════════════════════════════════════════════════════
