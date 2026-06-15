@@ -1,5 +1,14 @@
 # BrainFlow Unity Setup
 
+> ⚠️ **Linux users: do not use this path.** BrainFlow 5.22.2 cannot stream the
+> Muse S Athena on Linux (it connects but fails to subscribe to the data
+> characteristics — an upstream bug). Use the **UDP bridge** instead:
+> [muse-unity-bridge.md](muse-unity-bridge.md). The bridge is also the simplest
+> cross-platform option and is what `MuseUdpAdapter` / `PuzzleSceneBuilder` expect.
+>
+> Keep this guide only if you are on **Windows or macOS** and specifically want to
+> try BrainFlow's native `MuseAthenaAdapter` path (where it may work).
+
 Manual steps to install the BrainFlow plugin into Unity and enable the Muse S Athena
 integration. These steps require clicking through Unity's GUI — they cannot be scripted.
 

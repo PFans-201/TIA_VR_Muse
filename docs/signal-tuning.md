@@ -94,21 +94,30 @@ If hints are appearing too eagerly during normal play, raise the threshold towar
 
 ---
 
-## MuseAthenaAdapter live values
+## Live EEG source
 
-Find `MuseAthenaAdapter` in the Hierarchy (it persists from TutorialRoom via DontDestroyOnLoad).
+**On Linux (the supported path):** EEG comes from the Python bridge, not BrainFlow.
+The baseline, band-power maths and stress smoothing all happen in
+`Tools/muse_bridge.py`; Unity just receives the final stress value via
+`MuseUdpAdapter`. Select the **`MuseUdpAdapter`** GameObject in Play Mode to see:
 
 | Inspector field | Meaning |
 |---|---|
-| `Has Valid Data` | True once the first clean EEG window has been processed. |
-| `Latest Band Powers` | [delta, theta, alpha, beta, gamma] from the most recent 4-second window. |
-| `Smoothed Stress` | The EMA-smoothed stress value being sent to CognitiveLoadAdapter. |
-| `Baseline Phase Done` | True after the 60-second auto-baseline completes (or after TutorialManager overrides it). |
+| `Status` | `streaming (active)` once data is flowing; `listening … (no data)` if the bridge isn't running. |
+| `Stress` | The latest 0–1 stress value received from the bridge. |
+| `Phase` | `baseline` (bridge is calibrating, stress pinned at 0.5) or `active`. |
+| `Contact` | Whether the bridge reported good electrode contact for this reading. |
 
-If `Has Valid Data` stays False after 10+ seconds of being in Play Mode:
-- Check that Bluetooth is connected (Console should show `[MuseAthenaAdapter] Connected`).
-- Check headset electrode contact (the RMS check rejects very flat or very noisy signals).
-- Run `Tools/muse_athena_test.py` first to confirm the device works outside Unity.
+If `Status` stays `no data`:
+
+- Make sure the bridge is running: `.venv/bin/python Tools/muse_bridge.py`.
+- Confirm the ports match (`--udp-port` vs the `MuseUdpAdapter.port` Inspector field, default 5005).
+- Run `Tools/muse_bridge.py --no-udp` first to confirm the device works outside Unity
+  (see [eeg-debug-guide.md](eeg-debug-guide.md)).
+
+**On Windows/macOS with BrainFlow:** the legacy `MuseAthenaAdapter` exposes
+`Has Valid Data`, `Latest Band Powers`, `Smoothed Stress` and `Baseline Phase Done`
+instead. On Linux that component sits idle.
 
 ---
 
@@ -121,9 +130,9 @@ If `Has Valid Data` stays False after 10+ seconds of being in Play Mode:
    - After 20 s above 0.60 with low variance, `Stressed` state fires and blend ramps up
    - Dropping below 0.40 for 15 s returns to `Calm` and blend fades out
 
-2. **Connect the device and run `muse_athena_test.py`.** Note the typical resting stress
-   value for your participant. If it sits at 0.55 at rest, the system will trigger too
-   easily — lower `Onset Threshold` to match the participant's true baseline.
+2. **Connect the device and run `muse_bridge.py --no-udp`.** Note the typical resting
+   stress value for your participant. If it sits at 0.55 at rest, the system will trigger
+   too easily — lower `Onset Threshold` to match the participant's true baseline.
 
 3. **Run the full tutorial + puzzle session.** Observe `Onset Progress` in the Inspector.
    If it never reaches 1.0 even when the participant is clearly struggling, lower
@@ -132,7 +141,8 @@ If `Has Valid Data` stays False after 10+ seconds of being in Play Mode:
    — increase `Active Baseline Duration` in the TutorialManager Inspector.
 
 4. **Per-participant adjustment.** EEG band powers vary significantly between people.
-   The sensitivity parameter in `MuseAthenaAdapter` (`Stress Sensitivity`, default 1.5)
-   scales the sigmoid — higher values require a stronger z-score to move the stress
+   On the bridge path, pass `--sensitivity` to `muse_bridge.py` (default 1.5) — it
+   scales the sigmoid, so higher values require a stronger z-score to move the stress
    value away from 0.5. If one participant's signal barely moves off 0.5 even under
-   clear load, try lowering sensitivity to 1.0.
+   clear load, try `--sensitivity 1.0`. (On the Windows/macOS BrainFlow path the
+   equivalent is the `Stress Sensitivity` field on `MuseAthenaAdapter`.)

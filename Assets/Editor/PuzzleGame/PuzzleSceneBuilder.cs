@@ -202,12 +202,14 @@ public static class PuzzleSceneBuilder
         var udpGO = new GameObject("MuseUdpAdapter");
         var udp   = udpGO.AddComponent<MuseUdpAdapter>();
         udp.cognitiveLoad = cola;
-        udp.port          = 5005;
+        udp.port          = 5005;   // bridge -> Unity (stress)
+        udp.controlPort   = 5006;   // Unity -> bridge (baseline commands, --unity mode)
 
         // ── Tutorial Manager ──────────────────────────────────────────────────
         var tmGO = new GameObject("TutorialManager");
         var tm   = tmGO.AddComponent<TutorialManager>();
         tm.museAdapter            = muse;
+        tm.udpAdapter             = udp;
         tm.puzzleSceneName        = "ZenPuzzleRoom";
         tm.restBaselineDuration   = 60f;
         tm.activeBaselineDuration = 60f;

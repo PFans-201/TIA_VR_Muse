@@ -124,6 +124,31 @@ still works on the remaining channels.
 .venv/bin/pip install -r requirements.txt
 ```
 
+### Harmless SimpleBLE / D-Bus messages
+
+You may occasionally see lines like these mixed into the output:
+
+```text
+WARNING: This is an experimental version of the new Bluez backend...
+[ERROR] SimpleBLE: .../BackendBluezLegacy.cpp:84 ... org.bluez.Error.AlreadyExists: Already Exists
+[2] method call[(null)->org.bluez] /org/bluez org.bluez.AgentManager1 RegisterAgent
+[ERROR] SimpleBLE: .../BackendBluez.cpp:93 ... D-Bus call timed out
+```
+
+**These are harmless.** They come from the SimpleBLE Bluetooth library's internal
+threads, not from this script, and they do **not** affect the EEG data:
+
+- `experimental ... new Bluez backend` — SimpleBLE announcing its Linux backend.
+- `AgentManager1 RegisterAgent / AlreadyExists` — it tried to register a Bluetooth
+  pairing agent that already exists. The Muse needs no pairing, so this is moot.
+- `D-Bus call timed out` — a background bookkeeping call (agent registration) timed
+  out; the EEG stream uses a different path and keeps working.
+
+The bridge already redirects this chatter to `/dev/null`, but a few lines fire from
+a C++ background thread at unpredictable times and can slip through. Ignore them — if
+the script reaches `[OK] Connected and streaming.` and prints baseline/stress rows,
+the data is flowing correctly. Use `--verbose` if you actually want to see them.
+
 ## Feeding the signal into Unity
 
 Drop the `--no-udp` flag and the same tool streams the stress value to Unity over

@@ -56,6 +56,44 @@ In Unity, regenerate the scenes once so the `MuseUdpAdapter` GameObject is added
 3. Press **Play** in Unity. The `MuseUdpAdapter` Inspector shows
    `streaming (active)` and the live stress value once data flows.
 
+The single baseline above (sit still) is fine for the standalone terminal test. For
+the **VR game**, use the dual-baseline mode below instead.
+
+## Dual baseline for VR (`--unity` mode)
+
+In VR, a "sit still" baseline is contaminated by **novelty arousal** and **motor
+activity** (reaching/grabbing desynchronizes the mu rhythm, which overlaps the alpha
+band) — so just *moving* in VR would register as stress. The fix is a two-step
+baseline, driven by Unity's `TutorialManager` so it lines up with the real tutorial:
+
+1. **Rest baseline** — participant stands still (informational reference).
+2. **Active-VR baseline** — participant grabs/moves objects while *mentally relaxed*.
+   This is the **reference** the in-game stress is measured against, so the metric
+   captures "extra cognitive load on top of being-in-VR-and-moving", not the movement
+   itself. (Keep this phase low-effort — no puzzle — or you subtract the signal you
+   want to detect.)
+
+Run the bridge in command-driven mode:
+
+```bash
+.venv/bin/python Tools/muse_bridge.py --unity
+```
+
+It connects, then **waits** for `TutorialManager` to drive the phases. The flow:
+
+```text
+TutorialManager phase     ->  control command (UDP :5006)  ->  bridge state
+RestBaseline (start/end)  ->  baseline_rest_start / _stop   ->  rest -> idle
+ActiveBaseline (start)    ->  baseline_active_start         ->  active (accumulating)
+ActiveBaseline (end)      ->  baseline_active_stop          ->  finalize -> streaming
+```
+
+After `baseline_active_stop` the bridge computes the per-channel baseline from the
+active-VR samples and streams stress (phase `active`) for the rest of the session.
+Ports: bridge→Unity stress on **5005**, Unity→bridge commands on **5006**
+(`MuseUdpAdapter.port` / `controlPort`, `muse_bridge.py --udp-port` / `--control-port`).
+Other commands: `reset` returns the bridge to idle to recalibrate.
+
 ## How it maps to the old design
 
 | Old (BrainFlow)            | New (bridge)                                   |

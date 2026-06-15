@@ -63,8 +63,12 @@ public class TutorialManager : MonoBehaviour
     [Range(30f, 180f)] public float activeBaselineDuration = 60f;
 
     [Header("References — EEG")]
-    [Tooltip("Assigned automatically if MuseAthenaAdapter.Instance is available.")]
+    [Tooltip("BrainFlow adapter (Windows/macOS path). Assigned automatically if available.")]
     public MuseAthenaAdapter museAdapter;
+    [Tooltip("UDP bridge adapter (Linux path). When present, the rest + active-VR " +
+             "baselines are driven on the Python bridge via control commands. " +
+             "Assigned automatically from MuseUdpAdapter.Instance.")]
+    public MuseUdpAdapter udpAdapter;
 
     [Header("References — Tutorial Objects")]
     [Tooltip("GameObjects to enable during VR tutorial (grab practice items).")]
@@ -95,9 +99,11 @@ public class TutorialManager : MonoBehaviour
 
     private void Start()
     {
-        // Find the persisted adapter singleton if not wired in Inspector
+        // Find the persisted adapter singletons if not wired in Inspector
         if (museAdapter == null)
             museAdapter = MuseAthenaAdapter.Instance;
+        if (udpAdapter == null)
+            udpAdapter = MuseUdpAdapter.Instance;
 
         // Tutorial objects hidden until VRTutorial phase
         SetTutorialObjectsActive(false);
@@ -123,6 +129,7 @@ public class TutorialManager : MonoBehaviour
         ShowPhase(Phase.RestBaseline);
         _restSamples.Clear();
         if (restZoneMarker != null) restZoneMarker.SetActive(true);
+        if (udpAdapter != null) udpAdapter.SendCommand("baseline_rest_start");
 
         float elapsed = 0f;
         while (elapsed < restBaselineDuration)
@@ -139,6 +146,7 @@ public class TutorialManager : MonoBehaviour
                 $"  ({_restSamples.Count} windows)");
         }
 
+        if (udpAdapter != null) udpAdapter.SendCommand("baseline_rest_stop");
         if (restZoneMarker != null) restZoneMarker.SetActive(false);
         StartCoroutine(RunVRTutorial());
     }
@@ -172,6 +180,7 @@ public class TutorialManager : MonoBehaviour
     {
         ShowPhase(Phase.ActiveBaseline);
         _activeSamples.Clear();
+        if (udpAdapter != null) udpAdapter.SendCommand("baseline_active_start");
 
         float elapsed = 0f;
         while (elapsed < activeBaselineDuration)
@@ -188,7 +197,11 @@ public class TutorialManager : MonoBehaviour
                 $"  ({_activeSamples.Count} windows)");
         }
 
-        // Apply baselines to the adapter before leaving
+        // Finalize: the bridge turns the active-VR samples into the reference
+        // baseline and switches to streaming stress.
+        if (udpAdapter != null) udpAdapter.SendCommand("baseline_active_stop");
+
+        // BrainFlow path (Windows/macOS): apply the locally-collected baseline.
         ApplyBaselines();
         StartCoroutine(CompleteAndLoad());
     }

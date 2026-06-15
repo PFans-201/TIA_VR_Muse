@@ -32,6 +32,12 @@ public class MuseUdpAdapter : MonoBehaviour
     [Tooltip("Port the Python bridge sends to (muse_bridge.py --udp-port). Default 5005.")]
     public int port = 5005;
 
+    [Header("Control channel (to the bridge's --unity baseline state machine)")]
+    [Tooltip("Host the Python bridge runs on (usually localhost).")]
+    public string bridgeHost = "127.0.0.1";
+    [Tooltip("Port the bridge listens on for baseline commands (--control-port). Default 5006.")]
+    public int controlPort = 5006;
+
     [Header("Optional explicit target (else CognitiveLoadAdapter.Instance is used)")]
     public CognitiveLoadAdapter cognitiveLoad;
 
@@ -42,14 +48,35 @@ public class MuseUdpAdapter : MonoBehaviour
     [SerializeField] private bool   _contact = true;
     [SerializeField] private float  _secondsSinceLastPacket;
 
-    public float StressLevel => _stress;
-    public bool  Receiving    => _secondsSinceLastPacket < 5f;
+    public float  StressLevel => _stress;
+    public string Phase       => _phase;
+    public bool   Receiving   => _secondsSinceLastPacket < 5f;
 
     private UdpClient _udp;
+    private UdpClient _ctrlSender;
     private Thread _thread;
     private volatile bool _running;
     private readonly ConcurrentQueue<Reading> _queue = new ConcurrentQueue<Reading>();
     private float _lastPacketTime;
+
+    /// Sends a baseline command to the bridge's --unity state machine, e.g.
+    /// "baseline_rest_start", "baseline_rest_stop", "baseline_active_start",
+    /// "baseline_active_stop", "reset". No-op friendly: if the bridge isn't running
+    /// the datagram is simply dropped.
+    public void SendCommand(string cmd)
+    {
+        try
+        {
+            _ctrlSender ??= new UdpClient();
+            byte[] payload = Encoding.UTF8.GetBytes("{\"cmd\":\"" + cmd + "\"}\n");
+            _ctrlSender.Send(payload, payload.Length, bridgeHost, controlPort);
+            Debug.Log($"[MuseUdpAdapter] control -> {cmd}");
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"[MuseUdpAdapter] control send failed: {e.Message}");
+        }
+    }
 
     [Serializable]
     private struct Reading
@@ -144,8 +171,10 @@ public class MuseUdpAdapter : MonoBehaviour
         _running = false;
         try { _udp?.Close(); } catch { }
         try { _thread?.Join(200); } catch { }
+        try { _ctrlSender?.Close(); } catch { }
         _udp = null;
         _thread = null;
+        _ctrlSender = null;
         _status = "stopped";
     }
 

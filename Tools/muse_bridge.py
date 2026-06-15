@@ -43,6 +43,18 @@ import sys
 import threading
 import time
 
+# Mute SimpleBLE's native stderr chatter (the "experimental new Bluez backend"
+# warning and async D-Bus notices it emits from a C++ background thread) as early
+# as possible — before importing it — exactly like a shell `2>/dev/null`. The
+# original stderr fd is saved so main() can restore it around argument parsing
+# (keeping argparse errors visible) and re-mute for the session. Skip with --verbose.
+_SAVED_STDERR_FD = None
+if "--verbose" not in sys.argv:
+    _SAVED_STDERR_FD = os.dup(2)
+    _dn = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(_dn, 2)
+    os.close(_dn)
+
 try:
     import numpy as np
 except ImportError as e:
@@ -131,6 +143,32 @@ def per_channel_band_powers(window, fs):
 
 def sigmoid(x):
     return 1.0 / (1.0 + math.exp(-x))
+
+
+def finalize_baseline(samples):
+    """{name: [band vectors]} -> {name: (mean, std)} for channels seen in at least
+    half the windows. Empty if no channel produced a stable baseline."""
+    n = max((len(v) for v in samples.values()), default=0)
+    return {name: (np.mean(v, axis=0), np.std(v, axis=0))
+            for name, v in samples.items() if len(v) >= max(3, n // 2)}
+
+
+def stress_from_bp(bp, base):
+    """Per-channel z-scores vs the (active-VR) baseline, averaged over the channels
+    present in both. Returns (theta_z, alpha_z, cli, used) or None if no overlap."""
+    tz, az, used = [], [], []
+    for name, vec in bp.items():
+        if name not in base:
+            continue
+        m, s = base[name]
+        tz.append((vec[THETA] - m[THETA]) / s[THETA] if s[THETA] > 1e-9 else 0.0)
+        az.append((vec[ALPHA] - m[ALPHA]) / s[ALPHA] if s[ALPHA] > 1e-9 else 0.0)
+        used.append(name)
+    if not used:
+        return None
+    theta_z = float(np.mean(tz))
+    alpha_z = float(np.mean(az))
+    return theta_z, alpha_z, (theta_z - alpha_z) / 2.0, used
 
 
 # ── BLE reader ────────────────────────────────────────────────────────────────
@@ -321,6 +359,106 @@ def run_session(args, send):
         print("[OK] Disconnected.")
 
 
+def run_session_unity(args, send, ctrl_sock):
+    """Command-driven mode for the VR game: Unity's TutorialManager drives the dual
+    baseline. States: idle -> rest -> idle -> active -> streaming. The bridge keeps
+    computing band powers every tick; the rest/active states accumulate them, and on
+    'baseline_active_stop' the ACTIVE-VR samples become the reference baseline (so
+    in-game stress is measured above 'being in VR and moving', not above sitting still)."""
+    reader = MuseReader(name=args.name, mac=args.mac, window_secs=args.window)
+    reader.connect()
+    print(f"[OK]   Connected. Waiting for Unity to drive the baseline "
+          f"(control udp:{args.control_port}).\n")
+
+    commands = collections.deque()
+    running = {"on": True}
+
+    def ctrl_loop():
+        while running["on"]:
+            try:
+                data, _ = ctrl_sock.recvfrom(1024)
+            except OSError:
+                break
+            for line in data.decode(errors="ignore").split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    commands.append(json.loads(line).get("cmd", ""))
+                except Exception:
+                    commands.append(line)
+
+    threading.Thread(target=ctrl_loop, daemon=True, name="MuseCtrl").start()
+
+    state = "idle"
+    rest = collections.defaultdict(list)
+    active = collections.defaultdict(list)
+    base = {}
+    smoothed = 0.5
+    try:
+        while True:
+            time.sleep(args.update)
+            while commands:
+                cmd = commands.popleft()
+                if cmd == "baseline_rest_start":
+                    state, rest = "rest", collections.defaultdict(list)
+                    print("[CTRL] rest baseline started")
+                elif cmd == "baseline_rest_stop":
+                    state = "idle"
+                    print(f"[CTRL] rest baseline stopped "
+                          f"({max((len(v) for v in rest.values()), default=0)} windows)")
+                elif cmd == "baseline_active_start":
+                    state, active = "active", collections.defaultdict(list)
+                    print("[CTRL] active-VR baseline started")
+                elif cmd == "baseline_active_stop":
+                    base = finalize_baseline(active)
+                    if base:
+                        state = "streaming"
+                        print(f"[CTRL] baseline finalized on {'+'.join(base)} -> streaming")
+                    else:
+                        state = "idle"
+                        print("[CTRL] baseline finalize FAILED (no stable channel) -> idle")
+                elif cmd == "reset":
+                    state, base = "idle", {}
+                    rest, active = collections.defaultdict(list), collections.defaultdict(list)
+                    print("[CTRL] reset")
+
+            window, _ = reader.get_window(args.window)
+            bp = per_channel_band_powers(window, SAMPLE_RATE) if window is not None else {}
+
+            if state == "rest":
+                for n, v in bp.items():
+                    rest[n].append(v)
+                send({"phase": "baseline_rest", "stress": 0.5, "contact": bool(bp)})
+            elif state == "active":
+                for n, v in bp.items():
+                    active[n].append(v)
+                send({"phase": "baseline_active", "stress": 0.5, "contact": bool(bp)})
+            elif state == "streaming":
+                res = stress_from_bp(bp, base)
+                if res is None:
+                    send({"phase": "active", "stress": smoothed, "contact": False})
+                    continue
+                theta_z, alpha_z, cli, used = res
+                raw = sigmoid(cli / args.sensitivity)
+                smoothed = max(0.0, min(1.0, SMOOTH_ALPHA * raw + (1 - SMOOTH_ALPHA) * smoothed))
+                send({"phase": "active", "stress": smoothed, "theta_z": theta_z,
+                      "alpha_z": alpha_z, "cli": cli, "contact": True})
+                print(f"  stress={smoothed:.3f}  θz={theta_z:+.2f}  αz={alpha_z:+.2f}  {'+'.join(used)}")
+            else:  # idle
+                send({"phase": "idle", "stress": 0.5, "contact": bool(bp)})
+    except KeyboardInterrupt:
+        print("\n[INFO] Stopped by user.")
+    finally:
+        running["on"] = False
+        try:
+            ctrl_sock.close()
+        except Exception:
+            pass
+        reader.disconnect()
+        print("[OK] Disconnected.")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Muse S Athena -> Unity UDP bridge")
     ap.add_argument("--name", default="Muse",
@@ -340,6 +478,15 @@ def main():
     ap.add_argument("--no-udp", action="store_true")
     ap.add_argument("--verbose", action="store_true",
                     help="Show the SimpleBLE native library's stderr chatter.")
+    ap.add_argument("--unity", action="store_true",
+                    help="VR-game mode: let Unity's TutorialManager drive the dual "
+                         "(rest + active-VR) baseline via control UDP. Without this the "
+                         "bridge runs its own single rest baseline.")
+    ap.add_argument("--control-port", type=int, default=5006,
+                    help="UDP port to receive Unity baseline commands on (--unity mode).")
+    # Restore real stderr so argparse errors/usage are visible, parse, then re-mute.
+    if _SAVED_STDERR_FD is not None:
+        os.dup2(_SAVED_STDERR_FD, 2)
     args = ap.parse_args()
 
     try:                                    # live output even when piped to grep/tee
@@ -347,7 +494,7 @@ def main():
     except Exception:
         pass
 
-    if not args.verbose:
+    if not args.verbose and _SAVED_STDERR_FD is not None:
         mute_native_stderr()
     _load_simplepyble()        # import AFTER muting so the backend banner is hidden
 
@@ -361,8 +508,14 @@ def main():
             sock.sendto((json.dumps(payload) + "\n").encode(),
                         (args.udp_host, args.udp_port))
 
+    ctrl_sock = None
     try:
-        run_session(args, send)
+        if args.unity:
+            ctrl_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            ctrl_sock.bind(("0.0.0.0", args.control_port))
+            run_session_unity(args, send, ctrl_sock)
+        else:
+            run_session(args, send)
     except KeyboardInterrupt:
         print("\n[INFO] Stopped by user.")
     except Exception as e:
@@ -373,6 +526,11 @@ def main():
     finally:
         if sock is not None:
             sock.close()
+        if ctrl_sock is not None:
+            try:
+                ctrl_sock.close()
+            except Exception:
+                pass
 
     # Exit immediately. The SimpleBLE backend's daemon threads emit harmless D-Bus
     # chatter from C++ static destructors at interpreter shutdown (it caches the
