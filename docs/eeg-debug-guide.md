@@ -2,194 +2,129 @@
 
 How to verify that the Muse S Athena connects over Bluetooth and produces a valid
 cognitive-load signal **without opening Unity**. Run this before any VR session to
-confirm the device, the cable/BT stack, and the signal quality are all working.
+confirm the device, the BT stack, and the signal quality are all working.
+
+> **Why not BrainFlow?** BrainFlow 5.22.2 cannot stream the Muse S Athena on Linux
+> — it connects but fails to subscribe to the data characteristics
+> (`failed to notify any MuseAthena data characteristic`), an upstream bug. The
+> tool below uses SimpleBLE instead, which works on Linux, macOS and Windows.
+> See [muse-unity-bridge.md](muse-unity-bridge.md) for the full background.
+> The old `Tools/muse_athena_test.py` (BrainFlow) is kept only for Windows/macOS
+> experiments where BrainFlow's Athena path happens to work.
 
 ## Prerequisites
 
 ```bash
-pip install brainflow numpy
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt    # simplepyble + numpy
 ```
 
-That is the only dependency. BrainFlow communicates with the headset directly over
-the system Bluetooth stack — no extra drivers needed on Linux.
+No system drivers needed — SimpleBLE talks to the headset over the OS Bluetooth
+stack directly.
 
-## Step 1 — Find the MAC address
+## Step 1 — Turn on the headset
 
-You only need to do this once. The MAC address does not change between sessions.
+Power it on and check the **LED is pulsing** (advertising). It sleeps when idle, so
+if a scan finds nothing, press the button to wake it. You do **not** need to pair it
+in your OS Bluetooth settings — the bridge connects itself.
 
-**Linux (Arch, Ubuntu, etc.)**
+You normally do **not** need the MAC address: the tool finds the headset by name.
+
+## Step 2 — Run the connectivity / signal test (console only)
 
 ```bash
-bluetoothctl
-[bluetoothctl] power on      # REQUIRED — power the controller before scanning
-[bluetoothctl] scan on
-# Wait for a line like:
-#   [NEW] Device D4:22:CD:00:AA:BB Muse-S-AB
-# The XX:XX:XX:XX:XX:XX part is the MAC address you need.
-[bluetoothctl] scan off
-[bluetoothctl] exit
+# Find any "Muse" by name (works on Linux, macOS, Windows)
+.venv/bin/python Tools/muse_bridge.py --no-udp
+
+# Shorter baseline + a fixed-length run
+.venv/bin/python Tools/muse_bridge.py --no-udp --baseline 30 --duration 60
+
+# Pick an exact device if several are nearby
+.venv/bin/python Tools/muse_bridge.py --no-udp --name MuseS-9A06
+
+# Linux/Windows only — match by MAC (macOS hides the MAC behind a random UUID)
+.venv/bin/python Tools/muse_bridge.py --no-udp --mac 00:55:DA:BB:9A:06
+
+# More/less reactive stress (lower sensitivity = more reactive)
+.venv/bin/python Tools/muse_bridge.py --no-udp --sensitivity 1.0
 ```
 
-> **Always run `power on` first.** Going straight to `scan on` on a controller that
-> isn't powered yet fails with:
-> ```
-> SetDiscoveryFilter failed: org.bluez.Error.NotReady
-> Failed to start discovery: org.bluez.Error.NotReady
-> ```
-> `NotReady` means the adapter is not powered/initialized. Fix it with:
-> ```bash
-> rfkill unblock bluetooth
-> sudo systemctl restart bluetooth
-> bluetoothctl power on
-> # if it still fails, power-cycle the controller:
-> sudo btmgmt power off && sudo btmgmt power on
-> ```
-
-> If nothing appears after 30 s, try turning the headset off and on.
-> The Muse S enters pairing/advertising mode automatically when powered on.
-> You do NOT need to pair it in bluetoothctl — BrainFlow handles the connection itself.
-> In fact, **do not** pair/connect it here: a system-level connection grabs the BLE
-> link and prevents BrainFlow from opening the device.
-
-**Windows**
-
-Open **Settings → Bluetooth & devices → Add a device**.
-The headset appears as "Muse-S-XXXX". Note the MAC address shown in Device Manager
-under the Bluetooth entry, or use a tool like **Bluetooth LE Explorer** from the Store.
-
-## Step 2 — Run the connectivity test
-
-```bash
-# Minimal: just check that it connects
-python Tools/muse_athena_test.py --mac D4:22:CD:00:AA:BB
-
-# Custom baseline duration (default 60 s)
-python Tools/muse_athena_test.py --mac D4:22:CD:00:AA:BB --baseline 90
-
-# Adjust stress sensitivity (see signal-tuning.md)
-python Tools/muse_athena_test.py --mac D4:22:CD:00:AA:BB --sensitivity 2.0
-
-# Run monitoring for only 60 s instead of the default 120 s
-python Tools/muse_athena_test.py --mac D4:22:CD:00:AA:BB --duration 60
-```
+Useful flags: `--baseline <s>` (default 60), `--window <s>` band-power window
+(default 4), `--update <s>` time between readings / latency (default 1),
+`--sensitivity <x>` (default 1.5), `--duration <s>` (0 = until Ctrl+C),
+`--verbose` to show the SimpleBLE library's internal chatter.
 
 ## Step 3 — Understand the output
 
 ### Phase 1: Baseline
 
-```
+```text
 ============================================================
 PHASE 1 — BASELINE (60s)
-Sit still, relax, eyes open. Do NOT start any task yet.
+Sit still, relax, eyes open.
 ============================================================
-
-  Baseline [████████████████    ] 82%  θ=0.312  α=0.581
+  baseline [############        ] 60%  θ=88.52 α=26.01  ch=TP9+AF7+AF8
+...
+[OK] Baseline channels: TP9, AF7, AF8
+     TP9: θ=88.52±21.07  AF7: θ=5.23±1.79  AF8: θ=4.97±1.17
 ```
 
-- The progress bar fills over the baseline duration.
-- `θ` and `α` are the raw average band powers for theta (4–8 Hz) and alpha (8–13 Hz).
-- **Good values at rest**: alpha is typically higher than theta. A ratio around 0.4–0.8 for
-  theta and 0.5–1.2 for alpha is normal (exact numbers vary between people).
-- If you see `[WARN] Poor signal — adjust headset`, the RMS amplitude is outside the
-  expected range — adjust the headset fit and try again.
-
-After baseline completes you will see a summary:
-
-```
-[OK] Baseline captured (28 windows)
-     θ mean=0.318 ± 0.041
-     α mean=0.574 ± 0.063
-```
-
-Both standard deviations should be small relative to the mean (roughly < 30% of mean).
-High std means the signal was noisy or the headset moved during baseline.
+- The bar fills over the baseline duration. `θ`/`α` are the average theta (4–8 Hz)
+  and alpha (8–13 Hz) band powers across the **good** channels.
+- `ch=` shows which electrodes passed the quality check. A railing or flat
+  electrode (commonly TP10 / an ear sensor) is **automatically dropped** so it
+  cannot skew the baseline — seeing only 3 of 4 channels is normal.
+- The baseline is captured **per channel**: each electrode is later compared
+  against its own resting level, so channels dropping in/out don't distort the
+  metric.
 
 ### Phase 2: Active monitoring
 
+```text
+ Elapsed      θ z      α z      CLI   Stress  ch
+--------------------------------------------------------
+    1.0s    -0.30    -0.06    -0.12    0.495  TP9+AF7+AF8
+    2.0s    +3.54    -0.56    +2.05    0.625  TP9+AF7+AF8
 ```
- Elapsed    θ z-score   α z-score       CLI    Stress     Optical
-----------------------------------------------------------------------
-    2.0s       +0.21       -0.18      +0.19     0.524      3421.0
-    4.0s       +0.54       -0.61      +0.58     0.562      3388.5
-   ...
-```
 
-| Column | Meaning |
-|--------|---------|
-| `θ z-score` | How many standard deviations theta is above the resting baseline. Positive = elevated. |
-| `α z-score` | How many standard deviations alpha is above the resting baseline. Negative = suppressed. |
-| `CLI` | Cognitive Load Index = `(θ_z − α_z) / 2`. Positive = loaded, negative = relaxed. |
-| `Stress` | `sigmoid(CLI / sensitivity)` mapped to [0, 1]. ~0.5 is neutral. |
-| `Optical` | Mean absolute value of the infrared PPG channel. Confirms ancillary preset is streaming. |
+- `θ z` — theta, in std-devs above the resting baseline (averaged over good channels)
+- `α z` — alpha, in std-devs above baseline (negative = alpha suppressed)
+- `CLI` — Cognitive Load Index = `(θz − αz) / 2`; positive = loaded, negative = relaxed
+- `Stress` — smoothed `sigmoid(CLI / sensitivity)` in `[0,1]`; ~0.5 is neutral
+- `ch` — electrodes used for this reading
 
-### What "normal at rest" looks like
-
-- θ z-score: near 0 (±0.3)
-- α z-score: near 0 (±0.3)
-- CLI: near 0 (±0.2)
-- Stress: around 0.48–0.52
-
-### What "elevated load" looks like
-
-- θ z-score: +1.0 or higher (frontal theta rises)
-- α z-score: −0.5 or lower (alpha suppressed)
-- CLI: +0.5 to +1.5
-- Stress: 0.60–0.80
+**Normal at rest:** θz / αz near 0 (±0.5), CLI near 0, Stress ~0.45–0.55.
+**Elevated load:** θz up (+1 or more), αz down, CLI +0.5…+1.5, Stress 0.6–0.85.
 
 ## Troubleshooting
 
-### "Missing dependency: No module named 'brainflow'"
+### "Muse not found"
+
+The headset is asleep or off. Press the button so the **LED pulses**, then retry.
+
+### "No Bluetooth adapter found"
+
+Turn Bluetooth on. On Linux: `rfkill unblock bluetooth && sudo systemctl start bluetooth`.
+
+### "poor signal — adjust headset" / stress stuck ~0.5
+
+All channels failed the quality check, or you are still in the baseline phase.
+Press the electrodes (TP9, AF7, AF8, TP10) firmly to the skin; slightly dampen
+them if contact is poor. The usual culprit is the TP10 / ear contact — the tool
+drops it automatically, but if too many channels rail there is nothing to measure.
+
+### A channel never appears in `ch=`
+
+That electrode is railing (saturated, ~±1000 µV) or dead — re-seat it. The signal
+still works on the remaining channels.
+
+### Missing dependency: No module named 'simplepyble'
+
 ```bash
-pip install brainflow numpy
+.venv/bin/pip install -r requirements.txt
 ```
 
-### "[ERROR] BOARD_ERROR:19" or similar BrainFlow board error
+## Feeding the signal into Unity
 
-BrainFlow couldn't open the Bluetooth connection. Try:
-
-```bash
-# Arch Linux — ensure the BT daemon is running
-sudo systemctl start bluetooth
-rfkill unblock bluetooth
-
-# Then try to scan again
-bluetoothctl scan on
-```
-
-Also check:
-- The headset is powered on (steady or blinking indicator light)
-- No other device is already connected to it (BLE allows only one central connection at a time)
-- The MAC address is correct — Muse S Athena typically starts with `D4:22:CD:…` or `00:55:DA:…`
-
-### "[WARN] Poor signal — adjust headset" during baseline
-
-- Press the four electrodes firmly against your forehead (TP9, AF7, AF8, TP10).
-- Wet the electrodes slightly if contact is poor.
-- Avoid large jaw movements during baseline.
-- The check passes when RMS amplitude is between 0.5 µV and 800 µV.
-
-### Optical column always shows "N/A"
-
-The ancillary preset (infrared PPG, 64 Hz) failed to start. This is non-critical —
-EEG-based cognitive load detection works without it. If you need optical data,
-confirm the headset firmware is up to date via the Muse app.
-
-### Stress value stuck at ~0.5 and never moves
-
-The baseline captured successfully but the EEG signal is essentially flat.
-Possible causes:
-- Electrodes are not making contact (all channels amplifying noise only)
-- The headset's reference electrode (forehead sensor) is loose
-- Run `--baseline 30` with a very short baseline — if both θ std and α std are below 0.01,
-  the signal is likely dead. Re-seat the headset and try again.
-
-## What to record before the VR session
-
-Once the script runs successfully, note down:
-
-- The baseline θ and α means and standard deviations (printed after Phase 1)
-- Any channels that consistently showed "Poor signal" warnings
-- Whether optical data streamed or not
-
-This gives you a reference to compare against the Unity Inspector values when the
-`MuseAthenaAdapter` runs inside the game.
+Drop the `--no-udp` flag and the same tool streams the stress value to Unity over
+UDP. See [muse-unity-bridge.md](muse-unity-bridge.md).

@@ -5,5 +5,9 @@
 #
 # See docs/eeg-debug-guide.md for usage.
 
+# Linux note: BrainFlow 5.22.2 cannot stream the Muse S Athena (it connects but
+# fails to subscribe to the data characteristics). Use the SimpleBLE-based bridge
+# instead: Tools/muse_bridge.py  (see docs/muse-unity-bridge.md).
 brainflow==5.22.2
 numpy==2.4.6
+simplepyble==0.14.0

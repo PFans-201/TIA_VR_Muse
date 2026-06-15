@@ -196,6 +196,14 @@ public static class PuzzleSceneBuilder
         // baselineDurationSeconds = 60 (adapter's own auto-baseline still runs as fallback
         // if tutorial baseline collection fails — TutorialManager overrides it on completion)
 
+        // UDP bridge source — on Linux BrainFlow can't stream the Athena, so the
+        // Python bridge (Tools/muse_bridge.py) feeds stress in over UDP. Persists
+        // across scene loads and pushes into whichever CognitiveLoadAdapter is active.
+        var udpGO = new GameObject("MuseUdpAdapter");
+        var udp   = udpGO.AddComponent<MuseUdpAdapter>();
+        udp.cognitiveLoad = cola;
+        udp.port          = 5005;
+
         // ── Tutorial Manager ──────────────────────────────────────────────────
         var tmGO = new GameObject("TutorialManager");
         var tm   = tmGO.AddComponent<TutorialManager>();
