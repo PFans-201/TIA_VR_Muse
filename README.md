@@ -1,100 +1,106 @@
 # TIA VR Muse
 
-A VR puzzle game that adapts its difficulty in real-time based on the player's cognitive load,
-measured with a **Muse S Athena** EEG headset via BrainFlow.
+A VR puzzle game that adapts its difficulty in real time to the player's cognitive
+load, measured with a **Muse S Athena** EEG headset.
 
 ## What it does
 
-The player assembles a 3D puzzle in VR. While they play, the Muse S Athena streams EEG data
-to Unity over Bluetooth. A signal processing pipeline computes a cognitive-load index
-(frontal theta rise + parietal alpha drop, z-scored against a personalised resting baseline).
-When the system detects sustained, stable elevation in that index, it automatically increases
-assistance — magnetic snap zones strengthen, ghost outlines appear, and colour hints activate.
+The player assembles a 3D puzzle in VR. While they play, the Muse S Athena streams EEG
+data, and a signal-processing pipeline computes a cognitive-load index (frontal theta
+rise + parietal alpha drop, z-scored against a personalised baseline). When that index
+stays elevated, the game quietly increases assistance — magnetic snap zones strengthen,
+ghost outlines appear, and colour hints activate.
 
-## Hardware requirements
+## How the EEG signal gets in
 
-- Muse S Athena EEG headset (board ID 67 in BrainFlow)
-- VR headset — tested on Meta Quest via OpenXR; any OpenXR-compatible device should work
-- Bluetooth 4.0+ on the host machine
+BrainFlow can't stream the Muse S Athena on Linux, so the project reads the headset
+with a small SimpleBLE process and exposes the stress signal three ways (pick one):
 
-## Software requirements
+| Mode | Path | Use it for |
+|------|------|------------|
+| **A** | Muse → PC Python bridge → Unity **Editor** (UDP) | Developing / demoing on a PC |
+| **B** | Game on **Quest**, Muse on PC, stress relayed over WiFi | Quest build with a PC nearby |
+| **C** | **Quest** talks to the Muse over BLE itself (no PC) | Final untethered headset |
 
-| Tool | Version |
-|------|---------|
-| Unity | 2022.3 LTS |
-| XR Interaction Toolkit | 3.3.1 |
-| Universal Render Pipeline | 17.3.0 |
-| BrainFlow (NuGet) | 5.x |
-| Python (standalone debug only) | 3.9+ with `brainflow` and `numpy` |
+Everything downstream of `CognitiveLoadAdapter` is identical across all three modes.
+The full reasoning is in [docs/muse-unity-bridge.md](docs/muse-unity-bridge.md).
+
+## ▶ Getting started
+
+**New here? Follow [docs/getting-started.md](docs/getting-started.md)** — the complete
+from-zero setup (Python bridge, headset, Unity, and all three modes) for Linux, macOS,
+and Windows. The short version:
+
+```bash
+python -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python Tools/muse_bridge.py --no-udp   # baseline + live stress in the terminal
+```
+
+Then in Unity (**6000.3.11f1**): **Puzzle Game → Build All Scenes**, run
+`Tools/muse_bridge.py --unity`, and press **Play**.
+
+## Requirements
+
+- **Muse S Athena** EEG headset (the USB cable only charges — data is over BLE)
+- A machine with **Bluetooth LE**
+- **Unity 6000.3.11f1** (Android Build Support for Quest builds — modes B/C)
+- **Python 3.10+** for the bridge (`numpy`, `simplepyble` — see `requirements.txt`)
+- VR: **Meta Quest** via OpenXR (XR Interaction Toolkit 3.3.1, URP 17.3.0)
 
 ## Scene flow
 
-```
+```text
 EntryHall  →  TutorialRoom  →  ZenPuzzleRoom
 ```
 
 | Scene | Purpose |
 |-------|---------|
-| **EntryHall** | Difficulty selection — the player picks their preferred level of assistance |
-| **TutorialRoom** | VR controls practice and dual EEG baseline recording (see below) |
+| **EntryHall** | Difficulty selection — the player picks their level of assistance |
+| **TutorialRoom** | VR controls practice + dual EEG baseline recording (below) |
 | **ZenPuzzleRoom** | The adaptive puzzle session |
 
 ### Why two baselines?
 
-First-time VR users show elevated frontal theta from novelty arousal even before any task begins.
-A single resting baseline would inflate the cognitive-load estimate for the first few minutes,
-triggering false-positive stress detections.
+In VR a plain "sit still" baseline is contaminated by **novelty arousal** and **motor
+activity** (reaching/grabbing desynchronises the mu rhythm, which overlaps alpha), so
+merely *moving* would look like stress. TutorialRoom records two baselines in sequence:
 
-TutorialRoom records two baselines in sequence:
+1. **Rest (60 s)** — stand still, no task — the absolute resting state.
+2. **Active-VR (60 s)** — grab/move objects while mentally relaxed — "being in VR and
+   moving, *without* cognitive load."
 
-1. **Rest baseline (60 s)** — stand still, eyes open, no task. Captures the absolute resting state.
-2. **Active-VR baseline (60 s)** — interact with grab objects while staying mentally relaxed.
-   Captures "being in VR + mild motor activity WITHOUT cognitive load."
+Puzzle stress is measured as deviation above the **active-VR** baseline. The methodology
+and tuning live in [docs/muse-unity-bridge.md](docs/muse-unity-bridge.md) and
+[docs/signal-tuning.md](docs/signal-tuning.md).
 
-Puzzle stress is then measured as deviation above the active-VR baseline, not above sitting-in-a-chair.
-The adapter (`MuseAthenaAdapter`) persists across the scene transition carrying the recorded baselines.
+## Repository map
 
-## Repository structure
-
-```
+```text
 Assets/
-  Editor/PuzzleGame/
-    PuzzleSceneBuilder.cs        — Unity menu tool: Puzzle Game → Build All Scenes
-
+  Editor/PuzzleGame/PuzzleSceneBuilder.cs   — menu: Puzzle Game → Build All Scenes
   Scripts/PuzzleGame/
-    MuseAthenaAdapter.cs         — BrainFlow streaming, baseline capture, DontDestroyOnLoad singleton
-    CognitiveLoadAdapter.cs      — stress event bus used by all gameplay systems
-    SustainedStressDetector.cs   — rolling-window state machine (Calm / Stressed)
-    AdaptiveDifficultyController.cs — ramps assistance in/out based on detected state
-    TutorialManager.cs           — dual-baseline onboarding phase controller
-    PuzzleManager.cs             — puzzle state, difficulty settings, completion event
-    PuzzlePiece.cs               — per-piece physics, snap detection, visual states
-    MagneticSnapZone.cs          — adaptive magnetic snap force
-    PieceHintSystem.cs           — colour-hint overlay system
-    DifficultyLevel.cs           — enums and difficulty data structs
-    DifficultyUI.cs              — UI bindings for the entry-hall difficulty picker
-    ScenePortal.cs               — portal trigger for scene transitions
-
+    CognitiveLoadAdapter.cs        — stress event bus all gameplay systems listen to
+    MuseUdpAdapter.cs              — receives stress from the Python bridge (modes A/B)
+    MuseDirectAdapter.cs           — on-device Muse BLE + DSP for standalone Quest (mode C)
+    VelorexeBleTransport.cs        — Quest BLE transport (IMuseBleTransport impl)
+    MuseSignalProcessor.cs         — in-Unity FFT/band-power/baseline/stress (mode C)
+    IMuseBleTransport.cs · IMuseBaselineControl.cs — plugin/baseline seams
+    SustainedStressDetector.cs · AdaptiveDifficultyController.cs — detect & ramp assistance
+    TutorialManager.cs             — dual-baseline onboarding controller
+    PuzzleManager.cs · PuzzlePiece.cs · MagneticSnapZone.cs · PieceHintSystem.cs
+    DifficultyLevel.cs · DifficultyUI.cs · ScenePortal.cs
 Tools/
-  muse_athena_test.py            — standalone Python connectivity + baseline test (no Unity needed)
-
+  muse_bridge.py                   — SimpleBLE bridge: decode + baseline + stress → UDP
+Packages/
+  com.velorexe.androidbluetoothlowenergy/ — vendored Quest BLE plugin (mode C)
 docs/
-  eeg-debug-guide.md             — verify Muse S Athena works before opening Unity
-  brainflow-unity-setup.md       — manual BrainFlow plugin install + Unity config steps
-  signal-tuning.md               — adjusting thresholds, sensitivity, and testing without a device
+  getting-started.md               — ▶ start here: full from-zero setup, all modes
+  muse-unity-bridge.md             — bridge architecture, dual baseline, Quest direct BLE
+  eeg-debug-guide.md               — Bluetooth / connection troubleshooting
+  signal-tuning.md                 — thresholds, sensitivity, testing without a device
+  brainflow-unity-setup.md         — legacy BrainFlow path (Windows-only fallback)
 ```
 
-## First-time setup (overview)
-
-1. **Install BrainFlow in Unity** — follow [docs/brainflow-unity-setup.md](docs/brainflow-unity-setup.md)
-2. **Verify the device** — run the Python script before putting on the headset:
-   ```
-   pip install brainflow numpy
-   python Tools/muse_athena_test.py --mac XX:XX:XX:XX:XX:XX
-   ```
-   Full guide: [docs/eeg-debug-guide.md](docs/eeg-debug-guide.md)
-3. **Build scenes** — in Unity: **Puzzle Game → Build All Scenes**
-4. **Set MAC address** — find the `MuseAthenaAdapter` GameObject in TutorialRoom,
-   enter the Muse S MAC address in the Inspector field, then enter Play Mode
-
-For threshold tuning and testing without the device, see [docs/signal-tuning.md](docs/signal-tuning.md).
+> `MuseAthenaAdapter.cs` (the original BrainFlow adapter) is retained as a Windows-only
+> fallback; on Linux/macOS the bridge supersedes it. See
+> [docs/brainflow-unity-setup.md](docs/brainflow-unity-setup.md).
