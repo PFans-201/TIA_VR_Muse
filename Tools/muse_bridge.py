@@ -45,11 +45,25 @@ import time
 
 try:
     import numpy as np
-    import simplepyble
 except ImportError as e:
     print(f"[ERROR] Missing dependency: {e}")
     print("Run:  pip install simplepyble numpy")
     sys.exit(1)
+
+# simplepyble is imported lazily in main() AFTER stderr is muted, so the library's
+# import-time "experimental new Bluez backend" chatter is suppressed too.
+simplepyble = None
+
+
+def _load_simplepyble():
+    global simplepyble
+    try:
+        import simplepyble as _sble
+    except ImportError as e:
+        print(f"[ERROR] Missing dependency: {e}")
+        print("Run:  pip install simplepyble numpy")
+        sys.exit(1)
+    simplepyble = _sble
 
 # ── Muse GATT layout (model-specific, OS-independent) ─────────────────────────
 SERVICE = "0000fe8d-0000-1000-8000-00805f9b34fb"
@@ -199,11 +213,26 @@ class MuseReader:
         return window, take
 
     def disconnect(self):
-        if self.peripheral is not None:
+        p = self.peripheral
+        if p is None:
+            return
+        try:
+            p.disconnect()
+        except Exception:
+            pass
+        # Wait for the BLE link to ACTUALLY release. simplepyble processes the
+        # disconnect on its backend thread; if we exit too early (e.g. os._exit)
+        # the Muse stays in a "connected" state and won't advertise for the next
+        # run — requiring a physical power-cycle. Poll is_connected() to be sure.
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
             try:
-                self.peripheral.disconnect()
+                if not p.is_connected():
+                    return
             except Exception:
-                pass
+                break          # is_connected() unavailable — fall back to a wait
+            time.sleep(0.1)
+        time.sleep(0.5)
 
 
 # ── Session ─────────────────────────────────────────────────────────────────--
@@ -320,6 +349,7 @@ def main():
 
     if not args.verbose:
         mute_native_stderr()
+    _load_simplepyble()        # import AFTER muting so the backend banner is hidden
 
     sock = None
     if not args.no_udp:
