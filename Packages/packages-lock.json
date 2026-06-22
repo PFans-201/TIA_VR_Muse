@@ -93,6 +93,13 @@
       "dependencies": {},
       "url": "https://packages.unity.com"
     },
+    "com.unity.mobile.android-logcat": {
+      "version": "1.4.7",
+      "depth": 1,
+      "source": "registry",
+      "dependencies": {},
+      "url": "https://packages.unity.com"
+    },
     "com.unity.multiplayer.center": {
       "version": "1.0.1",
       "depth": 0,
@@ -323,6 +330,16 @@
         "com.unity.xr.legacyinputhelpers": "2.1.2"
       },
       "url": "https://packages.unity.com"
+    },
+    "com.velorexe.androidbluetoothlowenergy": {
+      "version": "file:com.velorexe.androidbluetoothlowenergy",
+      "depth": 0,
+      "source": "embedded",
+      "dependencies": {
+        "com.unity.mobile.android-logcat": "1.2.3",
+        "com.unity.ugui": "1.0.0",
+        "com.unity.modules.androidjni": "^1.0.0"
+      }
     },
     "com.unity.modules.accessibility": {
       "version": "1.0.0",

@@ -5,6 +5,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.UI;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
+using UnityEngine.XR.Interaction.Toolkit.UI;
 using TMPro;
 
 /// Unity Editor tool — builds both puzzle scenes from scratch.
@@ -276,7 +277,10 @@ public static class PuzzleSceneBuilder
         rt.sizeDelta = new Vector2(700f, 520f);
         root.transform.localScale = Vector3.one * 0.003f;
         root.AddComponent<CanvasScaler>();
-        root.AddComponent<GraphicRaycaster>();
+        // TrackedDeviceGraphicRaycaster is required so Quest controller ray-interactors
+        // can hit this world-space canvas. The standard GraphicRaycaster only responds
+        // to mouse/pointer events and is invisible to XR tracked devices.
+        root.AddComponent<TrackedDeviceGraphicRaycaster>();
 
         // Background panel
         var bg = AddUIPanel(root, "Background", Vector2.zero, new Vector2(700f, 520f),
@@ -590,7 +594,10 @@ public static class PuzzleSceneBuilder
         var canvas = root.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.WorldSpace;
         root.AddComponent<CanvasScaler>();
-        root.AddComponent<GraphicRaycaster>();
+        // TrackedDeviceGraphicRaycaster is required so Quest controller ray-interactors
+        // can hit this world-space canvas. The standard GraphicRaycaster only responds
+        // to mouse/pointer events and is invisible to XR tracked devices.
+        root.AddComponent<TrackedDeviceGraphicRaycaster>();
 
         var rootRT = root.GetComponent<RectTransform>();
         rootRT.sizeDelta  = new Vector2(620f, 480f);

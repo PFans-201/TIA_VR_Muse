@@ -1,0 +1,5 @@
+/Users/franciscoguimaraes/TIA_VR_Muse/.utmp/RelWithDebInfo/6n2ec1m4/arm64-v8a/CMakeFiles/edit_cache.dir
+/Users/franciscoguimaraes/TIA_VR_Muse/.utmp/RelWithDebInfo/6n2ec1m4/arm64-v8a/CMakeFiles/rebuild_cache.dir
+/Users/franciscoguimaraes/TIA_VR_Muse/.utmp/RelWithDebInfo/6n2ec1m4/arm64-v8a/GameActivity/CMakeFiles/game.dir
+/Users/franciscoguimaraes/TIA_VR_Muse/.utmp/RelWithDebInfo/6n2ec1m4/arm64-v8a/GameActivity/CMakeFiles/edit_cache.dir
+/Users/franciscoguimaraes/TIA_VR_Muse/.utmp/RelWithDebInfo/6n2ec1m4/arm64-v8a/GameActivity/CMakeFiles/rebuild_cache.dir
