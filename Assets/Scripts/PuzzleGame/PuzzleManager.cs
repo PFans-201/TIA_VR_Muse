@@ -92,6 +92,10 @@ public class PuzzleManager : MonoBehaviour
     /// Fired when the player completes a puzzle — DifficultyUI listens to unlock the next level.
     public event Action<PuzzleType, DifficultyLevel> OnPuzzleCompleted;
 
+    /// Fired when a puzzle is started (type + chosen difficulty) — HardModeDarkroom
+    /// listens to toggle the dark/lantern mode on Hard.
+    public event Action<PuzzleType, DifficultyLevel> OnPuzzleStarted;
+
     // ── Unity lifecycle ───────────────────────────────────────────────────────
 
     private void Awake()
@@ -187,6 +191,8 @@ public class PuzzleManager : MonoBehaviour
         }
 
         hintSystem?.RegisterPairs(hintPairs);
+
+        OnPuzzleStarted?.Invoke(puzzleType, level);
 
         Debug.Log($"[PuzzleManager] {puzzleType} · {level} — " +
                   $"{_activePieces.Count} pieces  " +

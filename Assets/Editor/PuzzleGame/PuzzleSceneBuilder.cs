@@ -208,10 +208,10 @@ public static class PuzzleSceneBuilder
     private static void BuildIntroScene()
     {
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-        AddDirectionalLight(new Color(0.96f, 0.96f, 0.95f), 0.60f, Quaternion.Euler(50f, 20f, 0f));
-        SetAmbientFlat(new Color(0.34f, 0.34f, 0.34f));
+        AddRoomLighting(8f, 8f, 3f, new Color(0.50f, 0.50f, 0.52f));
         AddFloor(Vector3.zero, 8f, 8f, GetOrCreateMat("Floor_Intro", new Color(0.82f, 0.82f, 0.82f)));
         AddWalls(8f, 8f, 3f, GetOrCreateMat("Wall_Intro", new Color(0.88f, 0.88f, 0.88f)));
+        AddCeiling(8f, 8f, 3f, GetOrCreateMat("Ceiling_Intro", new Color(0.90f, 0.90f, 0.90f)));
 
         SpawnXRRig(new Vector3(0f, 0f, -2.5f), new Vector3(0f, 1.7f, 1.6f));
 
@@ -275,11 +275,11 @@ public static class PuzzleSceneBuilder
     private static void BuildTutorialFlowScene()
     {
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-        AddDirectionalLight(new Color(0.97f, 0.96f, 0.93f), 0.70f, Quaternion.Euler(45f, -30f, 0f));
-        SetAmbientFlat(new Color(0.38f, 0.38f, 0.38f));
+        AddRoomLighting(8f, 9f, 3f, new Color(0.50f, 0.50f, 0.52f));
         var tableMat = GetOrCreateMat("Table_Tutorial", new Color(0.94f, 0.94f, 0.94f));
         AddFloor(Vector3.zero, 8f, 9f, GetOrCreateMat("Floor_Tutorial", new Color(0.80f, 0.80f, 0.80f)));
         AddWalls(8f, 9f, 3f, GetOrCreateMat("Wall_Tutorial", new Color(0.88f, 0.88f, 0.88f)));
+        AddCeiling(8f, 9f, 3f, GetOrCreateMat("Ceiling_Tutorial", new Color(0.90f, 0.90f, 0.90f)));
         SpawnXRRig(new Vector3(0f, 0f, -3.5f), new Vector3(0f, 1.4f, 1.8f));
 
         var cola = new GameObject("CognitiveLoadAdapter").AddComponent<CognitiveLoadAdapter>();
@@ -741,18 +741,19 @@ public static class PuzzleSceneBuilder
     {
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
-        // Soft neutral lighting — no warm tones, keeps grey surfaces truly grey
-        AddDirectionalLight(new Color(0.95f, 0.95f, 0.92f), 0.55f, Quaternion.Euler(55f, 25f, 0f));
-        SetAmbientFlat(new Color(0.32f, 0.32f, 0.32f));
+        // Bright, even lighting — returned so HardModeDarkroom can switch it all off on Hard.
+        var litAmbient = new Color(0.50f, 0.50f, 0.52f);
+        var roomLights = AddRoomLighting(8f, 8f, 3f, litAmbient);
 
         // Zen grey materials
         var floorMat = GetOrCreateMat("Floor_Zen",  new Color(0.82f, 0.82f, 0.82f));
         var wallMat  = GetOrCreateMat("Wall_Zen",   new Color(0.87f, 0.87f, 0.87f));
         var tableMat = GetOrCreateMat("Table_Zen",  new Color(0.93f, 0.93f, 0.93f));
 
-        // 8 × 8 × 3 m room
+        // 8 × 8 × 3 m room (roofed so it feels enclosed and contains the pieces)
         AddFloor(Vector3.zero, 8f, 8f, floorMat);
         AddWalls(8f, 8f, 3f, wallMat);
+        AddCeiling(8f, 8f, 3f, GetOrCreateMat("Ceiling_Zen", new Color(0.90f, 0.90f, 0.90f)));
 
         // Central puzzle table  (top surface at y = 1.0)
         AddBox("PuzzleTable", new Vector3(0f, 0.5f, 0f), new Vector3(1.4f, 1.0f, 1.4f), tableMat);
@@ -857,6 +858,21 @@ public static class PuzzleSceneBuilder
 
         // ── Ambient instruction text ──────────────────────────────────────
         AddWorldText("RoomLabel", new Vector3(0f, 2.85f, -3.8f), "Assemble the puzzle");
+
+        // ── Keep pieces inside the room (backstop for grabbed pieces) ──────
+        var contGO = new GameObject("RoomPieceContainer");
+        var cont   = contGO.AddComponent<RoomPieceContainer>();
+        cont.interiorCenter = new Vector3(0f, 1.4f, 0f);
+        cont.interiorSize   = new Vector3(7.4f, 2.7f, 7.4f);
+
+        // ── Hard mode: dark room + grabbable forearm lantern ──────────────
+        var lantern = BuildLantern(new Vector3(0.45f, 1.15f, -0.45f));   // on the table, reachable
+        var darkGO  = new GameObject("HardModeDarkroom");
+        var dark    = darkGO.AddComponent<HardModeDarkroom>();
+        dark.roomLights    = roomLights.ToArray();
+        dark.lantern       = lantern;
+        dark.puzzleManager = pm;
+        dark.litAmbient    = litAmbient;
 
         EditorSceneManager.SaveScene(scene, k_ZenScene);
         Debug.Log($"[PuzzleSceneBuilder] Saved {k_ZenScene}");
@@ -1085,6 +1101,98 @@ public static class PuzzleSceneBuilder
         return go;
     }
 
+    /// Roof so rooms feel enclosed (and pieces can't be lifted out over the walls). It's
+    /// a cube primitive, so it carries a BoxCollider that also caps the room physically.
+    private static void AddCeiling(float roomW, float roomD, float wallH, Material mat)
+    {
+        AddBox("Ceiling", new Vector3(0f, wallH + 0.05f, 0f),
+               new Vector3(roomW + 0.4f, 0.1f, roomD + 0.4f), mat);
+    }
+
+    private static Light AddPointLight(string name, Vector3 pos, Color color, float intensity, float range)
+    {
+        var go = new GameObject(name);
+        go.transform.position = pos;
+        var l = go.AddComponent<Light>();
+        l.type      = LightType.Point;
+        l.color     = color;
+        l.intensity = intensity;
+        l.range     = range;
+        l.shadows   = LightShadows.None;
+        return l;
+    }
+
+    /// Bright, even interior lighting for a ROOFED room: a soft directional for shape
+    /// plus four ceiling fill lights so panels/text read clearly and the space never
+    /// feels claustrophobic. Sets a generous flat ambient and RETURNS every light created
+    /// so callers can switch them off (e.g. the hard-mode darkroom).
+    private static List<Light> AddRoomLighting(float roomW, float roomD, float wallH, Color ambient)
+    {
+        SetAmbientFlat(ambient);
+        var lights = new List<Light>();
+
+        var dirGO = new GameObject("Directional Light");
+        dirGO.transform.rotation = Quaternion.Euler(50f, 25f, 0f);
+        var dir = dirGO.AddComponent<Light>();
+        dir.type      = LightType.Directional;
+        dir.color     = new Color(1f, 0.98f, 0.95f);
+        dir.intensity = 0.7f;
+        dir.shadows   = LightShadows.None;
+        lights.Add(dir);
+
+        float qx = roomW * 0.25f, qz = roomD * 0.25f, y = wallH - 0.25f;
+        Vector3[] spots =
+        {
+            new Vector3(-qx, y, -qz), new Vector3(qx, y, -qz),
+            new Vector3(-qx, y,  qz), new Vector3(qx, y,  qz),
+        };
+        foreach (var p in spots)
+            lights.Add(AddPointLight("CeilingLight", p, new Color(1f, 0.96f, 0.90f), 1.4f, 7f));
+
+        return lights;
+    }
+
+    /// A grabbable forearm lantern + spotlight for the hard (dark) puzzle. Starts
+    /// inactive; HardModeDarkroom enables it only on Hard. See [[ArmLantern]].
+    private static GameObject BuildLantern(Vector3 pos)
+    {
+        var go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        go.name = "Lantern";
+        go.transform.position   = pos;
+        go.transform.localScale = new Vector3(0.08f, 0.10f, 0.08f);
+        go.GetComponent<Renderer>().material = GetOrCreateMat("Lantern", new Color(0.95f, 0.85f, 0.45f));
+
+        go.AddComponent<Rigidbody>().mass = 0.3f;
+        go.AddComponent<XRGrabInteractable>();
+
+        // Spotlight aims along the lantern's local forward — once clipped to the forearm
+        // that becomes the arm direction.
+        var spotGO = new GameObject("LanternSpot");
+        spotGO.transform.SetParent(go.transform, false);
+        var spot = spotGO.AddComponent<Light>();
+        spot.type      = LightType.Spot;
+        spot.color     = new Color(1f, 0.93f, 0.75f);
+        spot.intensity = 5f;
+        spot.range     = 10f;
+        spot.spotAngle = 80f;
+        spot.shadows   = LightShadows.None;
+
+        // Small always-on glow so the lantern is visible (findable) in the dark room
+        // before the player grabs it.
+        var glowGO = new GameObject("LanternGlow");
+        glowGO.transform.SetParent(go.transform, false);
+        var glow = glowGO.AddComponent<Light>();
+        glow.type      = LightType.Point;
+        glow.color     = new Color(1f, 0.88f, 0.6f);
+        glow.intensity = 1.5f;
+        glow.range     = 2.5f;
+        glow.shadows   = LightShadows.None;
+
+        go.AddComponent<ArmLantern>();
+        go.SetActive(false);
+        return go;
+    }
+
     /// Spawns the XR rig at <paramref name="pos"/> and yaws it so the player's default
     /// forward faces <paramref name="faceTarget"/> (the panel/table). Yaw only, so the
     /// horizon stays level. NOTE: in VR the headset's real orientation is applied on top
@@ -1104,6 +1212,13 @@ public static class PuzzleSceneBuilder
         Vector3 flat = faceTarget - pos; flat.y = 0f;
         if (flat.sqrMagnitude > 0.0001f)
             rig.transform.rotation = Quaternion.LookRotation(flat.normalized, Vector3.up);
+
+        // Recenter the player's head to this spawn pose at runtime so a scene transition
+        // (e.g. Tutorial → Game) can't leave them standing on the wrong side of the room.
+        var recenter = rig.GetComponent<XRSpawnRecenter>();
+        if (recenter == null) recenter = rig.AddComponent<XRSpawnRecenter>();
+        recenter.spawnPosition = pos;
+        recenter.faceTarget    = faceTarget;
     }
 
     private static void AddWorldText(string goName, Vector3 pos, string text)
