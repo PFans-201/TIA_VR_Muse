@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using UnityEngine;
 
 namespace Android.BLE
@@ -51,7 +51,12 @@ namespace Android.BLE
         [SerializeField]
         private string base64Message = string.Empty;
 
-        public byte[] GetByteMessage() => Convert.FromBase64String(base64Message);
+        public byte[] GetByteMessage()
+        {
+            if (string.IsNullOrEmpty(base64Message)) return new byte[0];
+            try { return Convert.FromBase64String(base64Message); }
+            catch (FormatException) { return new byte[0]; }
+        }
 
         public override string ToString() => JsonUtility.ToJson(this, true);
     }

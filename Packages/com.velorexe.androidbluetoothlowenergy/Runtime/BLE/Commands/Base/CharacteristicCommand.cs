@@ -48,6 +48,12 @@ namespace Android.BLE.Commands
             }
             else
             {
+                if (string.IsNullOrEmpty(service) || service.Length < 8 ||
+                    string.IsNullOrEmpty(characteristic) || characteristic.Length < 8)
+                {
+                    return false;
+                }
+
                 if (string.Equals(device, DeviceAddress) &&
                     string.Equals(Service, service.Get16BitUuid()) &&
                     string.Equals(Characteristic, characteristic.Get16BitUuid()))

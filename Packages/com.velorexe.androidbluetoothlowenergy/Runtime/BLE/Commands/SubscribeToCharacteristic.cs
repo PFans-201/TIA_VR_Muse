@@ -1,5 +1,3 @@
-﻿using System.Diagnostics;
-using System.Threading.Tasks;
 using Android.BLE.Extension;
 
 namespace Android.BLE.Commands
@@ -64,10 +62,13 @@ namespace Android.BLE.Commands
 
             if (string.Equals(obj.Command, "DescriptorWrite"))
             {
-                //UnityEngine.Debug.Log($"DescriptorWrite uuid={obj.Descriptor.Get16BitUuid()} val={obj.GetByteMessage()[0]} ");
-                if(string.Equals(obj.Descriptor.Get16BitUuid(),"2902") && obj.GetByteMessage()[0] == 0x1)
+                if (string.IsNullOrEmpty(obj.Descriptor)) return false;
+                
+                var bytes = obj.GetByteMessage();
+                if (bytes == null || bytes.Length == 0) return false;
+                
+                if(string.Equals(obj.Descriptor.Get16BitUuid(),"2902") && bytes[0] == 0x1)
                 {
-                    //UnityEngine.Debug.Log("DescriptorWrite recieved switching to parallel");
                     RunParallel = true;            
                 }
             }

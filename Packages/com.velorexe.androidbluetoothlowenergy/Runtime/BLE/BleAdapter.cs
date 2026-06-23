@@ -1,4 +1,4 @@
-﻿using Android.BLE.Events;
+using Android.BLE.Events;
 using UnityEngine;
 
 namespace Android.BLE
@@ -27,16 +27,23 @@ namespace Android.BLE
         /// <param name="jsonMessage">The <see cref="BleObject"/> in JSON format.</param>
         public void OnBleMessage(string jsonMessage)
         {
-            BleObject obj = JsonUtility.FromJson<BleObject>(jsonMessage);
-            if (obj.HasError)
+            try
             {
-                OnErrorReceived?.Invoke(obj.ErrorMessage);
-                UnityOnErrorReceived?.Invoke(obj.ErrorMessage);
+                BleObject obj = JsonUtility.FromJson<BleObject>(jsonMessage);
+                if (obj.HasError)
+                {
+                    OnErrorReceived?.Invoke(obj.ErrorMessage);
+                    UnityOnErrorReceived?.Invoke(obj.ErrorMessage);
+                }
+                else
+                {
+                    OnMessageReceived?.Invoke(obj);
+                    UnityOnMessageReceived?.Invoke(obj);
+                }
             }
-            else
+            catch (System.Exception e)
             {
-                OnMessageReceived?.Invoke(obj);
-                UnityOnMessageReceived?.Invoke(obj);
+                Debug.LogError($"[BleAdapter] Error processing message: {e.Message}");
             }
         }
 

@@ -1,4 +1,4 @@
-﻿using Android.BLE.Commands;
+using Android.BLE.Commands;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -94,9 +94,6 @@ namespace Android.BLE
 
             if (InitializeOnAwake)
                 Initialize();
-
-            _adapter.OnMessageReceived += OnBleMessageReceived;
-            _adapter.OnErrorReceived += OnErrorReceived;
         }
 
         private void Update()
@@ -151,6 +148,12 @@ namespace Android.BLE
                         _adapter = bleAdapter.AddComponent<BleAdapter>();
                     }
                 }
+                
+                // Ensures we're subscribed (and removes any duplicate subscriptions)
+                _adapter.OnMessageReceived -= OnBleMessageReceived;
+                _adapter.OnErrorReceived -= OnErrorReceived;
+                _adapter.OnMessageReceived += OnBleMessageReceived;
+                _adapter.OnErrorReceived += OnErrorReceived;
                 #endregion
 
                 // Binds to the com.velorexe.unityandroidble.UnityAndroidBLE Singleton
@@ -161,6 +164,10 @@ namespace Android.BLE
                     _bleLibrary = librarySingleton.CallStatic<AndroidJavaObject>("getInstance");
                 }
                 #endregion
+
+                // ✅ Mark as initialized so the guard doesn't re-enter on next call
+                _initialized = true;
+                Debug.Log("[BleManager] Initialized — Java BLE library bound.");
             }
         }
 
@@ -172,11 +179,18 @@ namespace Android.BLE
         {
             foreach (BleCommand command in _parallelStack)
                 command.End();
+            _parallelStack.Clear();
+
+            _activeCommand?.End();
+            _activeCommand = null;
+            _commandQueue.Clear();
 
             _bleLibrary?.Dispose();
 
             if (_adapter != null)
                 Destroy(_adapter.gameObject);
+                
+            _initialized = false;
         }
 
         /// <summary>

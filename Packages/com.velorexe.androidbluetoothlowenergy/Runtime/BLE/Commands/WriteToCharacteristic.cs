@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 
 namespace Android.BLE.Commands
 {
@@ -45,7 +45,7 @@ namespace Android.BLE.Commands
         public WriteToCharacteristic(string deviceAddress, string serviceAddress, string characteristicAddress, string data, bool customGatt = false) : base( deviceAddress,  serviceAddress,  characteristicAddress, customGatt)
         { 
            Base64Data = data;
-            _timeout = 1f;
+            _timeout = 5f;
         }
 
         /// <summary>
@@ -60,7 +60,7 @@ namespace Android.BLE.Commands
         {
             //currently in the Java lib UnityAndroidBLE.writeToCustomGattCharacteristic uses base64 encoded data only for CustomGattCharacteristics 
             Base64Data = CustomGatt ? System.Convert.ToBase64String(data) : Encoding.ASCII.GetString(data);
-            _timeout = 1f;
+            _timeout = 5f;
         }
 
         public override void Start()

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace Android.BLE.Commands
 {
@@ -30,12 +30,14 @@ namespace Android.BLE.Commands
         public DiscoverDevices(int discoverTime = StandardDiscoverTime) : base(true)
         {
             _discoverTime = discoverTime;
+            _timeout = discoverTime / 1000f + 3f;  // C# timeout = Java scan time + 3s buffer
         }
 
         public DiscoverDevices(Action<string, string> onDeviceDiscovered, int discoverTime = StandardDiscoverTime) : base(true)
         {
             OnDeviceDiscovered += new DeviceDiscovered(onDeviceDiscovered);
             _discoverTime = discoverTime;
+            _timeout = discoverTime / 1000f + 3f;
         }
 
         /// <summary>
@@ -49,6 +51,7 @@ namespace Android.BLE.Commands
             OnDeviceDiscovered += new DeviceDiscovered(onDeviceDiscovered);
             OnFinishedDiscovering = onFinishedDiscovering;
             _discoverTime = discoverTime;
+            _timeout = discoverTime / 1000f + 3f;  // C# timeout must exceed Java scan duration
         }
 
         public override void Start() => BleManager.SendCommand("scanBleDevices", _discoverTime);

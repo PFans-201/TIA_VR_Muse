@@ -50,13 +50,20 @@ public class MuseDirectAdapter : MonoBehaviour, IMuseBaselineControl
 
     public float  StressLevel => _stress;
     public string Phase       => _phase;
+    public bool   Contact     => _contact;
+    public string Status      => _status;
+
+    // Latest signal-processor reading — updated every updateInterval seconds.
+    // Safe to read from the main thread (written only in Update).
+    public MuseSignalProcessor.Reading LastReading { get; private set; }
 
     private IMuseBleTransport _ble;
     private readonly MuseSignalProcessor _proc = new MuseSignalProcessor();
     private volatile bool _connected;
-    private bool _streaming;
-    private bool _settingUp;
+    private volatile bool _streaming;   // written from OnDisconnected (may be BLE thread)
+    private volatile bool _settingUp;   // written from OnDisconnected (may be BLE thread)
     private float _tickAccum;
+    private Coroutine _setupCoroutine;
 
     private void Awake()
     {
@@ -82,6 +89,11 @@ public class MuseDirectAdapter : MonoBehaviour, IMuseBaselineControl
     // ── BLE callbacks ─────────────────────────────────────────────────────────
     private void OnDeviceFound(string deviceId)
     {
+        if (string.IsNullOrEmpty(deviceId))
+        {
+            Debug.LogError("[MuseDirectAdapter] OnDeviceFound received null/empty deviceId — ignoring.");
+            return;
+        }
         _status = $"connecting to {deviceId}";
         _ble.Connect(deviceId, () => _connected = true, OnDisconnected);
     }
@@ -90,7 +102,20 @@ public class MuseDirectAdapter : MonoBehaviour, IMuseBaselineControl
     {
         _connected = false;
         _streaming = false;
-        _status = "disconnected";
+        _settingUp = false;   // volatile — visible to main-thread Update immediately
+        _status = "disconnected — rescanning...";
+        Debug.LogWarning("[MuseDirectAdapter] Disconnected from Muse. Will rescan.");
+
+        // Cancel any in-progress SetupStream coroutine so it doesn't issue
+        // duplicate Subscribe/Write commands when we reconnect.
+        if (_setupCoroutine != null) { StopCoroutine(_setupCoroutine); _setupCoroutine = null; }
+
+        // Restart scan so the headset can reconnect after a dropout.
+        if (_ble != null && gameObject.activeInHierarchy)
+        {
+            _status = "rescanning after disconnect";
+            _ble.StartScan(deviceNameContains, OnDeviceFound);
+        }
     }
 
     private void OnEegData(int channel, byte[] payload)
@@ -100,21 +125,37 @@ public class MuseDirectAdapter : MonoBehaviour, IMuseBaselineControl
     }
 
     // Subscribe + start the stream on the main thread once connected.
+    // A short delay after connect lets the Quest's GATT stack finish service
+    // discovery before we subscribe to characteristics.
     private IEnumerator SetupStream()
     {
+        _status = "connected — waiting for GATT service discovery...";
+        Debug.Log("[MuseDirectAdapter] Waiting for GATT service discovery (0.8s).");
+        yield return new WaitForSeconds(0.8f);
+
+        if (!_connected) { _settingUp = false; yield break; }  // disconnected while waiting
+
+        _status = "subscribing to EEG characteristics...";
         for (int c = 0; c < EegChars.Length; c++)
         {
             int ch = c;   // capture
+            Debug.Log($"[MuseDirectAdapter] Subscribing channel {ch}: {EegChars[c]}");
             _ble.Subscribe(Service, EegChars[c], data => OnEegData(ch, data));
-            yield return null;
+            yield return new WaitForSeconds(0.3f);  // give each subscription time to confirm
         }
+
+        _status = "sending start commands...";
         foreach (var cmd in StartCmds)
         {
+            Debug.Log($"[MuseDirectAdapter] Sending command: {cmd}");
             _ble.WriteCommand(Service, Ctrl, EncodeCommand(cmd));
-            yield return new WaitForSeconds(0.2f);
+            yield return new WaitForSeconds(0.3f);
         }
+
         _streaming = true;
+        _settingUp = false;
         _status = "streaming";
+        Debug.Log("[MuseDirectAdapter] EEG streaming started.");
     }
 
     private static byte[] EncodeCommand(string s)
@@ -133,7 +174,9 @@ public class MuseDirectAdapter : MonoBehaviour, IMuseBaselineControl
         if (_connected && !_streaming && !_settingUp)
         {
             _settingUp = true;
-            StartCoroutine(SetupStream());
+            // Cancel any stale coroutine (safety net for rapid disconnect/reconnect)
+            if (_setupCoroutine != null) StopCoroutine(_setupCoroutine);
+            _setupCoroutine = StartCoroutine(SetupStream());
         }
         if (!_streaming) return;
 
@@ -143,6 +186,7 @@ public class MuseDirectAdapter : MonoBehaviour, IMuseBaselineControl
 
         _proc.Sensitivity = sensitivity;
         MuseSignalProcessor.Reading r = _proc.Tick();
+        LastReading = r;
         _stress  = r.stress;
         _phase   = r.phase.ToString();
         _contact = r.contact;

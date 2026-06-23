@@ -1,4 +1,4 @@
-﻿namespace Android.BLE.Commands
+namespace Android.BLE.Commands
 {
     /// <summary>
     /// Command to connect to a given BLE device.
@@ -125,8 +125,12 @@
                         }
                     case "DisconnectedFromGattServer":
                         {
+                            _isConnected = false;
                             OnDisconnected?.Invoke(obj.Device);
-                            return true;
+                            // IMPORTANT: return false (not true) so this command stays in
+                            // the BleManager parallel stack and can handle future
+                            // DeviceConnected events if the headset reconnects.
+                            return false;
                         }
                 }
             }
