@@ -1160,24 +1160,36 @@ public static class PuzzleSceneBuilder
         go.name = "Lantern";
         go.transform.position   = pos;
         go.transform.localScale = new Vector3(0.08f, 0.10f, 0.08f);
-        // Emissive body so the lantern is the ONLY thing visible in the pitch-black room —
-        // it glows by itself without casting light on the walls/floor.
+        // Emissive body so the lantern glows and reads as a light source in the dark.
         go.GetComponent<Renderer>().material =
-            GetOrCreateEmissiveMat("Lantern", new Color(1f, 0.85f, 0.45f), 4f);
+            GetOrCreateEmissiveMat("Lantern", new Color(1f, 0.82f, 0.40f), 2.5f);
 
         go.AddComponent<Rigidbody>().mass = 0.3f;
         go.AddComponent<XRGrabInteractable>();
 
+        // Glow that travels with the lantern: a real pool of light around the player's hand
+        // so grabbing it visibly lights their surroundings (and the lantern is easy to find
+        // before grabbing). Reflections are off in dark mode, so it stays a local pool.
+        var glowGO = new GameObject("LanternGlow");
+        glowGO.transform.SetParent(go.transform, false);
+        var glow = glowGO.AddComponent<Light>();
+        glow.type      = LightType.Point;
+        glow.color     = new Color(1f, 0.85f, 0.55f);
+        glow.intensity = 2.4f;
+        glow.range     = 3.8f;
+        glow.shadows   = LightShadows.None;
+
         // Beam — OFF until grabbed (ArmLantern enables it). Aims along the lantern's local
-        // forward, which becomes the arm direction once clipped to the forearm.
+        // forward, which becomes the arm direction once clipped to the forearm. Bright and
+        // wide so it clearly reveals surfaces it sweeps across.
         var spotGO = new GameObject("LanternSpot");
         spotGO.transform.SetParent(go.transform, false);
         var spot = spotGO.AddComponent<Light>();
         spot.type      = LightType.Spot;
         spot.color     = new Color(1f, 0.93f, 0.75f);
-        spot.intensity = 6f;
-        spot.range     = 12f;
-        spot.spotAngle = 75f;
+        spot.intensity = 9f;
+        spot.range     = 14f;
+        spot.spotAngle = 70f;
         spot.shadows   = LightShadows.None;
         spot.enabled   = false;
 
@@ -1317,19 +1329,27 @@ public static class PuzzleSceneBuilder
     }
 
     /// Self-illuminated material — renders its colour as emission so the object stays
-    /// visible even in a pitch-black room without lighting its surroundings.
+    /// visible even in a pitch-black room without lighting its surroundings. Applies the
+    /// emission even to an already-existing material asset (an earlier build may have
+    /// created a non-emissive one with the same name).
     private static Material GetOrCreateEmissiveMat(string matName, Color color, float emission)
     {
-        var path = $"{k_MatDir}/{matName}.mat";
-        var mat  = AssetDatabase.LoadAssetAtPath<Material>(path);
-        if (mat != null) return mat;
+        var path  = $"{k_MatDir}/{matName}.mat";
+        var mat   = AssetDatabase.LoadAssetAtPath<Material>(path);
+        bool isNew = mat == null;
+        if (isNew)
+        {
+            var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            mat = new Material(shader) { name = matName };
+        }
 
-        var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-        mat = new Material(shader) { name = matName, color = color };
+        mat.color = color;
         mat.EnableKeyword("_EMISSION");
         mat.SetColor("_EmissionColor", color * emission);
         mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
-        AssetDatabase.CreateAsset(mat, path);
+
+        if (isNew) AssetDatabase.CreateAsset(mat, path);
+        else       EditorUtility.SetDirty(mat);
         return mat;
     }
 

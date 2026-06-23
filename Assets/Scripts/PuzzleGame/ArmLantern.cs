@@ -17,7 +17,7 @@ public class ArmLantern : MonoBehaviour
     public Vector3 forearmOffset = new Vector3(0f, 0.03f, -0.10f);
 
     [Tooltip("Local euler tilt so the spotlight aims slightly ahead of the arm.")]
-    public Vector3 aimTilt = new Vector3(25f, 0f, 0f);
+    public Vector3 aimTilt = new Vector3(10f, 0f, 0f);
 
     [Tooltip("The lantern's beam (spotlight). Stays OFF until grabbed, then lights the arm direction.")]
     public Light beam;
@@ -25,6 +25,7 @@ public class ArmLantern : MonoBehaviour
     private XRGrabInteractable _grab;
     private Rigidbody _rb;
     private bool _attached;
+    private Transform _pendingHand;
 
     private void Awake()
     {
@@ -40,8 +41,18 @@ public class ArmLantern : MonoBehaviour
 
     private void OnGrabbed(SelectEnterEventArgs args)
     {
-        if (_attached) return;
-        AttachToArm(args.interactorObject.transform);
+        // Defer the actual attach by a frame so XRI finishes its own grab handling first.
+        if (!_attached) _pendingHand = args.interactorObject.transform;
+        Debug.Log($"[ArmLantern] grabbed by '{_pendingHand?.name}' (beam wired: {beam != null})");
+    }
+
+    private void LateUpdate()
+    {
+        if (_pendingHand != null && !_attached)
+        {
+            AttachToArm(_pendingHand);
+            _pendingHand = null;
+        }
     }
 
     private void AttachToArm(Transform hand)
@@ -58,6 +69,7 @@ public class ArmLantern : MonoBehaviour
 
         // Now light up — the beam reveals whatever the arm points at.
         if (beam != null) beam.enabled = true;
+        Debug.Log($"[ArmLantern] attached to '{hand.name}' forearm; beam on: {beam != null}");
 
         // Release it from the grab interaction so the hand is immediately free to grab
         // pieces, and disable further grabbing so it can never be dropped.

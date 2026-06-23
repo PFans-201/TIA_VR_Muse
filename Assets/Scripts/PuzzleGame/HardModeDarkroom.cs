@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering;
 
 /// On HARD difficulty, plunges the puzzle room into darkness (room lights off, ambient
 /// dropped) and switches on the grabbable lantern — the player must grab the lantern
@@ -43,12 +44,13 @@ public class HardModeDarkroom : MonoBehaviour
             foreach (var l in roomLights)
                 if (l != null) l.enabled = !dark;
 
-        RenderSettings.ambientLight = dark ? darkAmbient : litAmbient;
+        // Kill EVERY ambient/indirect source, not just the ambient colour — otherwise URP
+        // environment reflections + ambient intensity still reveal wall/object outlines.
+        RenderSettings.ambientMode      = AmbientMode.Flat;
+        RenderSettings.ambientLight     = dark ? darkAmbient : litAmbient;
+        RenderSettings.ambientIntensity = dark ? 0f : 1f;
+        RenderSettings.reflectionIntensity = dark ? 0f : 1f;
 
-        if (lantern != null)
-        {
-            if (dark) lantern.SetActive(true);
-            else      lantern.SetActive(false);
-        }
+        if (lantern != null) lantern.SetActive(dark);
     }
 }
