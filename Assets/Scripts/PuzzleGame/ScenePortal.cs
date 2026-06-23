@@ -15,7 +15,7 @@ using UnityEngine.SceneManagement;
 public class ScenePortal : MonoBehaviour
 {
     [Tooltip("Name of the scene to load (must be added to Build Settings)")]
-    public string targetSceneName = "ZenPuzzleScene";
+    public string targetSceneName = "ZenPuzzleRoom";
 
     [Tooltip("Tag of the player's head/camera GameObject (default: MainCamera)")]
     public string playerHeadTag = "MainCamera";
@@ -27,6 +27,14 @@ public class ScenePortal : MonoBehaviour
     public float transitionDelay = 0.5f;
 
     private bool _isTransitioning = false;
+
+    /// The portal starts DISABLED so it cannot be triggered before the player
+    /// confirms a difficulty in DifficultyUI. DifficultyUI.ConfirmDifficulty()
+    /// sets enabled = true at the right moment.
+    private void Awake()
+    {
+        enabled = false;
+    }
 
     private void OnTriggerEnter(Collider other)
     {

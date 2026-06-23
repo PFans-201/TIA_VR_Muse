@@ -317,8 +317,8 @@ public class MuseSignalProcessor
         {
             double sum = 0; foreach (var s in samples) sum += s[b];
             mean[b] = sum / n;
-            double var = 0; foreach (var s in samples) var += (s[b] - mean[b]) * (s[b] - mean[b]);
-            std[b] = Math.Sqrt(var / n);
+            double variance = 0; foreach (var s in samples) variance += (s[b] - mean[b]) * (s[b] - mean[b]);
+            std[b] = Math.Sqrt(variance / n);
         }
     }
 

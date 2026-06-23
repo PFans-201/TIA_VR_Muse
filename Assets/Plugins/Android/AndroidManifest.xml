@@ -29,4 +29,26 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
                      android:usesPermissionFlags="neverForLocation" tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:targetApi="s" />
+
+    <!--
+      Explicitly name the Unity main activity so the manifest merger has a valid key
+      attribute when the Oculus/Meta OpenXR feature injects:
+          <activity>
+              <intent-filter>
+                  <category android:name="com.oculus.intent.category.VR" />
+              </intent-filter>
+          </activity>
+      Without this the merger fails with:
+          "Missing 'name' key attribute on element activity"
+    -->
+    <application>
+        <activity android:name="com.unity3d.player.UnityPlayerGameActivity"
+                  android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="com.oculus.intent.category.VR" />
+            </intent-filter>
+        </activity>
+    </application>
 </manifest>
