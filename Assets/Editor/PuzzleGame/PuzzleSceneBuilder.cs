@@ -1160,13 +1160,23 @@ public static class PuzzleSceneBuilder
         go.name = "Lantern";
         go.transform.position   = pos;
         go.transform.localScale = new Vector3(0.08f, 0.10f, 0.08f);
-        // Emissive body so the lantern is the ONLY thing visible in the pitch-black room —
-        // it glows by itself without casting light on the walls/floor.
+        // Emissive body so the lantern glows and reads as a light source in the dark.
         go.GetComponent<Renderer>().material =
-            GetOrCreateEmissiveMat("Lantern", new Color(1f, 0.85f, 0.45f), 4f);
+            GetOrCreateEmissiveMat("Lantern", new Color(1f, 0.82f, 0.40f), 2.5f);
 
         go.AddComponent<Rigidbody>().mass = 0.3f;
         go.AddComponent<XRGrabInteractable>();
+
+        // Soft glow so the lantern actually emits a small pool of light (easy to find) and
+        // lights the player's hand area once attached — small range keeps the room dark.
+        var glowGO = new GameObject("LanternGlow");
+        glowGO.transform.SetParent(go.transform, false);
+        var glow = glowGO.AddComponent<Light>();
+        glow.type      = LightType.Point;
+        glow.color     = new Color(1f, 0.85f, 0.55f);
+        glow.intensity = 1.6f;
+        glow.range     = 1.8f;
+        glow.shadows   = LightShadows.None;
 
         // Beam — OFF until grabbed (ArmLantern enables it). Aims along the lantern's local
         // forward, which becomes the arm direction once clipped to the forearm.

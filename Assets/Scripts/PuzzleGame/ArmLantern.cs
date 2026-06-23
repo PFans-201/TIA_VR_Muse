@@ -43,6 +43,7 @@ public class ArmLantern : MonoBehaviour
     {
         // Defer the actual attach by a frame so XRI finishes its own grab handling first.
         if (!_attached) _pendingHand = args.interactorObject.transform;
+        Debug.Log($"[ArmLantern] grabbed by '{_pendingHand?.name}' (beam wired: {beam != null})");
     }
 
     private void LateUpdate()
@@ -68,6 +69,7 @@ public class ArmLantern : MonoBehaviour
 
         // Now light up — the beam reveals whatever the arm points at.
         if (beam != null) beam.enabled = true;
+        Debug.Log($"[ArmLantern] attached to '{hand.name}' forearm; beam on: {beam != null}");
 
         // Release it from the grab interaction so the hand is immediately free to grab
         // pieces, and disable further grabbing so it can never be dropped.
