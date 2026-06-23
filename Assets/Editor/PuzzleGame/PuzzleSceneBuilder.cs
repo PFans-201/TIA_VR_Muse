@@ -1317,19 +1317,27 @@ public static class PuzzleSceneBuilder
     }
 
     /// Self-illuminated material — renders its colour as emission so the object stays
-    /// visible even in a pitch-black room without lighting its surroundings.
+    /// visible even in a pitch-black room without lighting its surroundings. Applies the
+    /// emission even to an already-existing material asset (an earlier build may have
+    /// created a non-emissive one with the same name).
     private static Material GetOrCreateEmissiveMat(string matName, Color color, float emission)
     {
-        var path = $"{k_MatDir}/{matName}.mat";
-        var mat  = AssetDatabase.LoadAssetAtPath<Material>(path);
-        if (mat != null) return mat;
+        var path  = $"{k_MatDir}/{matName}.mat";
+        var mat   = AssetDatabase.LoadAssetAtPath<Material>(path);
+        bool isNew = mat == null;
+        if (isNew)
+        {
+            var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+            mat = new Material(shader) { name = matName };
+        }
 
-        var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
-        mat = new Material(shader) { name = matName, color = color };
+        mat.color = color;
         mat.EnableKeyword("_EMISSION");
         mat.SetColor("_EmissionColor", color * emission);
         mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
-        AssetDatabase.CreateAsset(mat, path);
+
+        if (isNew) AssetDatabase.CreateAsset(mat, path);
+        else       EditorUtility.SetDirty(mat);
         return mat;
     }
 

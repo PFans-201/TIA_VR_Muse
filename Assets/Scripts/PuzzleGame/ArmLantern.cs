@@ -25,6 +25,7 @@ public class ArmLantern : MonoBehaviour
     private XRGrabInteractable _grab;
     private Rigidbody _rb;
     private bool _attached;
+    private Transform _pendingHand;
 
     private void Awake()
     {
@@ -40,8 +41,17 @@ public class ArmLantern : MonoBehaviour
 
     private void OnGrabbed(SelectEnterEventArgs args)
     {
-        if (_attached) return;
-        AttachToArm(args.interactorObject.transform);
+        // Defer the actual attach by a frame so XRI finishes its own grab handling first.
+        if (!_attached) _pendingHand = args.interactorObject.transform;
+    }
+
+    private void LateUpdate()
+    {
+        if (_pendingHand != null && !_attached)
+        {
+            AttachToArm(_pendingHand);
+            _pendingHand = null;
+        }
     }
 
     private void AttachToArm(Transform hand)
