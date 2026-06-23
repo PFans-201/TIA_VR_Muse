@@ -69,3 +69,22 @@ crashlytics-build.properties
 # External cloned repos (exploration only — not part of the project)
 BlueMuse/
 brainflow/
+
+# Android Gradle / native (CMake + ninja) build temp
+.utmp/
+
+# Burst AOT debug output (never ship / never commit)
+*_BurstDebugInformation_DoNotShip/
+
+# Mono / crash dumps
+mono_crash.*.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*~
+
+# Unity XR Interaction Simulation runtime temp (under Assets — placed AFTER the
+# "!/Assets/**/*.meta" rule above so its .meta is re-ignored too)
+[Aa]ssets/XR/Temp/
+[Aa]ssets/XR/Temp.meta
