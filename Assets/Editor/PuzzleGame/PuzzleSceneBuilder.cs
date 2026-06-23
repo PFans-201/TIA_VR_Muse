@@ -362,10 +362,11 @@ public static class PuzzleSceneBuilder
     // ── Scene 3: Game (difficulty selection + puzzle, derived from ZenPuzzleRoom) ──
     private static bool BuildGameScene()
     {
-        // The game scene is generated from the puzzle template; build the template once
-        // if it isn't there yet (keeps the flow self-contained — no separate menu needed).
-        if (AssetDatabase.LoadAssetAtPath<SceneAsset>(k_ZenScene) == null)
-            BuildZenPuzzleRoomScene();
+        // Always rebuild the puzzle template fresh so the game scene inherits the
+        // CURRENT, self-consistent layout — XR rig facing the puzzle table with the
+        // difficulty UI in front. (Reusing a stale ZenPuzzleRoom left the rig
+        // mis-oriented at 130°, so the player spawned facing away from the puzzle.)
+        BuildZenPuzzleRoomScene();
         if (AssetDatabase.LoadAssetAtPath<SceneAsset>(k_ZenScene) == null)
         {
             Debug.LogError("[PuzzleSceneBuilder] Could not generate the puzzle template (ZenPuzzleRoom).");
@@ -381,7 +382,11 @@ public static class PuzzleSceneBuilder
         ApplyVRUIFix();     // ensure VR interaction
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene);
-        Debug.Log($"[PuzzleSceneBuilder] Saved {k_GameScene} (from ZenPuzzleRoom)");
+
+        // ZenPuzzleRoom is only an intermediate template for the session flow — remove
+        // it so it can't linger in the project and later be copied in a stale state.
+        AssetDatabase.DeleteAsset(k_ZenScene);
+        Debug.Log($"[PuzzleSceneBuilder] Saved {k_GameScene} (built fresh; template removed).");
         return true;
     }
 
