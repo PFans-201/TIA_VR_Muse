@@ -1167,27 +1167,29 @@ public static class PuzzleSceneBuilder
         go.AddComponent<Rigidbody>().mass = 0.3f;
         go.AddComponent<XRGrabInteractable>();
 
-        // Soft glow so the lantern actually emits a small pool of light (easy to find) and
-        // lights the player's hand area once attached — small range keeps the room dark.
+        // Glow that travels with the lantern: a real pool of light around the player's hand
+        // so grabbing it visibly lights their surroundings (and the lantern is easy to find
+        // before grabbing). Reflections are off in dark mode, so it stays a local pool.
         var glowGO = new GameObject("LanternGlow");
         glowGO.transform.SetParent(go.transform, false);
         var glow = glowGO.AddComponent<Light>();
         glow.type      = LightType.Point;
         glow.color     = new Color(1f, 0.85f, 0.55f);
-        glow.intensity = 1.6f;
-        glow.range     = 1.8f;
+        glow.intensity = 2.4f;
+        glow.range     = 3.8f;
         glow.shadows   = LightShadows.None;
 
         // Beam — OFF until grabbed (ArmLantern enables it). Aims along the lantern's local
-        // forward, which becomes the arm direction once clipped to the forearm.
+        // forward, which becomes the arm direction once clipped to the forearm. Bright and
+        // wide so it clearly reveals surfaces it sweeps across.
         var spotGO = new GameObject("LanternSpot");
         spotGO.transform.SetParent(go.transform, false);
         var spot = spotGO.AddComponent<Light>();
         spot.type      = LightType.Spot;
         spot.color     = new Color(1f, 0.93f, 0.75f);
-        spot.intensity = 6f;
-        spot.range     = 12f;
-        spot.spotAngle = 75f;
+        spot.intensity = 9f;
+        spot.range     = 14f;
+        spot.spotAngle = 70f;
         spot.shadows   = LightShadows.None;
         spot.enabled   = false;
 

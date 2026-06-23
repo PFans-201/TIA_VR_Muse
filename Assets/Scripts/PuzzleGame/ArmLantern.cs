@@ -17,7 +17,7 @@ public class ArmLantern : MonoBehaviour
     public Vector3 forearmOffset = new Vector3(0f, 0.03f, -0.10f);
 
     [Tooltip("Local euler tilt so the spotlight aims slightly ahead of the arm.")]
-    public Vector3 aimTilt = new Vector3(25f, 0f, 0f);
+    public Vector3 aimTilt = new Vector3(10f, 0f, 0f);
 
     [Tooltip("The lantern's beam (spotlight). Stays OFF until grabbed, then lights the arm direction.")]
     public Light beam;
