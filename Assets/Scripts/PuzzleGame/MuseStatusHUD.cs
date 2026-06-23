@@ -202,12 +202,22 @@ public class MuseStatusHUD : MonoBehaviour
         Camera cam = Camera.main;
         if (cam == null)
         {
+            // Find the active XR camera (ignore disabled cameras or reflection probes)
+            foreach (var c in FindObjectsOfType<Camera>()) {
+                if (c.isActiveAndEnabled && c.targetTexture == null) {
+                    cam = c;
+                    break;
+                }
+            }
+        }
+        
+        if (cam == null)
+        {
             _buildRetries++;
             if (_buildRetries >= MaxBuildRetries)
             {
-                Debug.LogError("[MuseStatusHUD] Camera.main not found after " +
-                               $"{MaxBuildRetries} retries — HUD disabled. " +
-                               "Tag your XR camera as 'MainCamera'.");
+                Debug.LogError("[MuseStatusHUD] No Camera found in scene after " +
+                               $"{MaxBuildRetries} retries — HUD disabled.");
                 enabled = false;
                 return;
             }

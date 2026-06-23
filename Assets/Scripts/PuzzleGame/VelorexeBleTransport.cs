@@ -148,12 +148,18 @@ public class VelorexeBleTransport : MonoBehaviour, IMuseBleTransport
 #endif
     }
 
+    public static string LastDiscoveredDevice = "None";
+
 #if UNITY_ANDROID && !UNITY_EDITOR
     // ── Internals ─────────────────────────────────────────────────────────────
 
     private void OnDeviceDiscovered(string deviceAddress, string deviceName)
     {
         if (_found) return;
+        
+        string dName = string.IsNullOrEmpty(deviceName) ? "[Hidden/No Name]" : deviceName;
+        LastDiscoveredDevice = $"{dName} ({deviceAddress})";
+        
         if (string.IsNullOrEmpty(deviceName)) return;
 
         Debug.Log($"[VelorexeBleTransport] Discovered: '{deviceName}' ({deviceAddress})");
@@ -226,11 +232,9 @@ public class VelorexeBleTransport : MonoBehaviour, IMuseBleTransport
             AddIfMissing(needed, "android.permission.BLUETOOTH_SCAN");
             AddIfMissing(needed, "android.permission.BLUETOOTH_CONNECT");
         }
-        else
-        {
-            // Pre-Android-12 (e.g. older Quest builds) needs location for BLE scan.
-            AddIfMissing(needed, Permission.FineLocation);
-        }
+        
+        // Meta Quest OS strictly enforces Location for BLE scans even on API 32+
+        AddIfMissing(needed, Permission.FineLocation);
 
         if (needed.Count == 0)
         {
