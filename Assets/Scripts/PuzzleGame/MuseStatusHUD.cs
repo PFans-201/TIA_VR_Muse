@@ -248,7 +248,7 @@ public class MuseStatusHUD : MonoBehaviour
         titleTxt.fontStyle = FontStyles.Bold;
         titleTxt.color     = new Color(0.75f, 0.85f, 1.00f, 1f);
         titleTxt.alignment = TextAlignmentOptions.Left;
-        titleTxt.enableWordWrapping = false;
+        titleTxt.textWrappingMode = TextWrappingModes.NoWrap;
 
         // ── Status label ──────────────────────────────────────────────────
         var statusRT = MakeRect(panel, "Status");
@@ -258,7 +258,7 @@ public class MuseStatusHUD : MonoBehaviour
         _statusLabel.text     = $"<color={HexScan}>●</color>  Initializing...";
         _statusLabel.fontSize = 10f;
         _statusLabel.color    = Color.white;
-        _statusLabel.enableWordWrapping = false;
+        _statusLabel.textWrappingMode = TextWrappingModes.NoWrap;
         _statusLabel.overflowMode       = TextOverflowModes.Ellipsis;
         _statusLabel.alignment          = TextAlignmentOptions.Left;
 
@@ -282,7 +282,7 @@ public class MuseStatusHUD : MonoBehaviour
         _valuesLabel.text      = "waiting for data...";
         _valuesLabel.fontSize  = 8.5f;
         _valuesLabel.color     = new Color(0.85f, 0.85f, 0.85f, 1f);
-        _valuesLabel.enableWordWrapping = false;
+        _valuesLabel.textWrappingMode = TextWrappingModes.NoWrap;
         _valuesLabel.alignment          = TextAlignmentOptions.Left;
 
         // ── Legend ────────────────────────────────────────────────────────
@@ -298,7 +298,7 @@ public class MuseStatusHUD : MonoBehaviour
         legTxt.fontSize  = 8f;
         legTxt.color     = new Color(0.65f, 0.68f, 0.75f, 1f);
         legTxt.alignment = TextAlignmentOptions.Center;
-        legTxt.enableWordWrapping = false;
+        legTxt.textWrappingMode = TextWrappingModes.NoWrap;
     }
 
     // ── Layout helpers ────────────────────────────────────────────────────────

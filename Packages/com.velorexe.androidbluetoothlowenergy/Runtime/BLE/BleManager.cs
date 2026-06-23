@@ -139,7 +139,7 @@ namespace Android.BLE
                 #region Adapter
                 if (_adapter == null)
                 {
-                    _adapter = FindObjectOfType<BleAdapter>();
+                    _adapter = FindFirstObjectByType<BleAdapter>();
                     if (_adapter == null)
                     {
                         GameObject bleAdapter = new GameObject(nameof(BleAdapter));

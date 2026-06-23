@@ -51,6 +51,7 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
     public float  StressLevel => _stress;
     public string Phase       => _phase;
     public bool   Receiving   => _secondsSinceLastPacket < 5f;
+    public string Status      => _status;
 
     private UdpClient _udp;
     private UdpClient _ctrlSender;

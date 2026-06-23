@@ -14,7 +14,7 @@ using System.Collections.Generic;
 /// Channel order matches the BLE characteristics: 0=TP9, 1=AF7, 2=AF8, 3=TP10.
 public class MuseSignalProcessor
 {
-    public enum BaselinePhase { Idle, Rest, ActiveVR, Streaming }
+    public enum BaselinePhase { Idle, Rest, ActiveVR, TutorialActive, Streaming }
 
     public const int   SampleRate   = 256;        // Hz
     public const int   WindowSize   = 1024;       // 4 s @ 256 Hz, power of 2 for the FFT
@@ -43,9 +43,12 @@ public class MuseSignalProcessor
     private BaselinePhase _phase = BaselinePhase.Idle;
     private readonly List<double[]>[] _restAccum;
     private readonly List<double[]>[] _activeAccum;
-    private double[][] _baseMean;   // per channel band means (null if no baseline)
-    private double[][] _baseStd;
+    // Two committed references: rest (used to score the tutorial for the difficulty
+    // recommendation) and active-VR (the in-game reference). Either is null until built.
+    private double[][] _restMean,   _restStd;
+    private double[][] _activeMean, _activeStd;
     private float _smoothed = 0.5f;
+    private float _peakStress;      // peak stress vs REST seen during the tutorial
 
     public MuseSignalProcessor()
     {
@@ -73,31 +76,35 @@ public class MuseSignalProcessor
         _buffers[channel].Add(samples);
     }
 
-    // ── Baseline control (called by TutorialManager) ───────────────────────────
-    public void StartRestBaseline()   { _phase = BaselinePhase.Rest;     ClearAccum(_restAccum); }
-    public void StopRestBaseline()    { _phase = BaselinePhase.Idle; }
-    public void StartActiveBaseline() { _phase = BaselinePhase.ActiveVR; ClearAccum(_activeAccum); }
+    /// Peak stress (vs the REST reference) observed during the tutorial phase — drives
+    /// the difficulty recommendation. 0 until a tutorial phase has run.
+    public float PeakTutorialStress => _peakStress;
 
-    /// Turns the collected active-VR samples into the reference baseline and switches
-    /// to streaming. Returns false (and stays Idle) if no channel had a stable baseline.
+    // ── Baseline control ────────────────────────────────────────────────────────
+    // Legacy single-baseline flow (old TutorialManager): StartRest → StartActive →
+    // FinalizeBaseline. New 3-scene flow (SessionFlowManager): StartRest →
+    // FinalizeRestBaseline → StartTutorialActive → FinalizeBaseline.
+    public void StartRestBaseline()    { _phase = BaselinePhase.Rest;           ClearAccum(_restAccum); }
+    public void StopRestBaseline()     { _phase = BaselinePhase.Idle; }
+    public void StartActiveBaseline()  { _phase = BaselinePhase.ActiveVR;       ClearAccum(_activeAccum); }
+    public void StartTutorialActive()  { _phase = BaselinePhase.TutorialActive; ClearAccum(_activeAccum); _peakStress = 0f; _smoothed = 0.5f; }
+
+    /// Commits the collected rest samples as the REST reference (used to score the
+    /// tutorial). Returns false (stays Idle) if no channel had a stable baseline.
+    public bool FinalizeRestBaseline()
+    {
+        bool ok = BuildReference(_restAccum, out _restMean, out _restStd);
+        _phase = BaselinePhase.Idle;
+        return ok;
+    }
+
+    /// Commits the collected active-VR samples as the in-game reference and switches to
+    /// streaming. Returns false (and stays Idle) if no channel had a stable baseline.
     public bool FinalizeBaseline()
     {
-        int maxWindows = 0;
-        for (int c = 0; c < _activeAccum.Length; c++)
-            maxWindows = Math.Max(maxWindows, _activeAccum[c].Count);
-        int minNeeded = Math.Max(3, maxWindows / 2);
-
-        var mean = new double[ChannelNames.Length][];
-        var std  = new double[ChannelNames.Length][];
-        bool any = false;
-        for (int c = 0; c < _activeAccum.Length; c++)
-        {
-            if (_activeAccum[c].Count < minNeeded) continue;
-            MeanStd(_activeAccum[c], out mean[c], out std[c]);
-            any = true;
-        }
-        if (!any) { _phase = BaselinePhase.Idle; return false; }
-        _baseMean = mean; _baseStd = std;
+        bool ok = BuildReference(_activeAccum, out _activeMean, out _activeStd);
+        if (!ok) { _phase = BaselinePhase.Idle; return false; }
+        _smoothed = 0.5f;
         _phase = BaselinePhase.Streaming;
         return true;
     }
@@ -105,9 +112,30 @@ public class MuseSignalProcessor
     public void Reset()
     {
         _phase = BaselinePhase.Idle;
-        _baseMean = _baseStd = null;
+        _restMean = _restStd = _activeMean = _activeStd = null;
         _smoothed = 0.5f;
+        _peakStress = 0f;
         ClearAccum(_restAccum); ClearAccum(_activeAccum);
+    }
+
+    /// Builds per-channel band mean/std from accumulated windows; true if any channel
+    /// had enough stable windows.
+    private static bool BuildReference(List<double[]>[] accum, out double[][] mean, out double[][] std)
+    {
+        int maxWindows = 0;
+        for (int c = 0; c < accum.Length; c++) maxWindows = Math.Max(maxWindows, accum[c].Count);
+        int minNeeded = Math.Max(3, maxWindows / 2);
+
+        mean = new double[ChannelNames.Length][];
+        std  = new double[ChannelNames.Length][];
+        bool any = false;
+        for (int c = 0; c < accum.Length; c++)
+        {
+            if (accum[c].Count < minNeeded) continue;
+            MeanStd(accum[c], out mean[c], out std[c]);
+            any = true;
+        }
+        return any;
     }
 
     // ── Per-tick update (call at the update rate, e.g. once a second) ──────────
@@ -127,8 +155,17 @@ public class MuseSignalProcessor
                 return new Reading { phase = _phase, stress = 0.5f, contact = bp.Count > 0,
                                      usedChannels = Join(bp.Keys) };
 
+            case BaselinePhase.TutorialActive:
+                // Collect the active-VR reference AND stream stress vs REST so we can
+                // detect whether VR itself is overwhelming the user (for the difficulty
+                // recommendation). Tracks the peak.
+                foreach (var kv in bp) _activeAccum[kv.Key].Add(kv.Value);
+                var tr = StreamAgainst(bp, _restMean, _restStd);
+                if (tr.contact) _peakStress = Math.Max(_peakStress, tr.stress);
+                return tr;
+
             case BaselinePhase.Streaming:
-                return Stream(bp);
+                return StreamAgainst(bp, _activeMean, _activeStd);
 
             default:
                 return new Reading { phase = _phase, stress = 0.5f, contact = bp.Count > 0,
@@ -136,15 +173,15 @@ public class MuseSignalProcessor
         }
     }
 
-    private Reading Stream(Dictionary<int, double[]> bp)
+    private Reading StreamAgainst(Dictionary<int, double[]> bp, double[][] refMean, double[][] refStd)
     {
         double tzSum = 0, azSum = 0; int n = 0;
         var used = new List<int>();
         foreach (var kv in bp)
         {
             int c = kv.Key;
-            if (_baseMean == null || _baseMean[c] == null) continue;
-            double[] m = _baseMean[c], s = _baseStd[c];
+            if (refMean == null || refMean[c] == null) continue;
+            double[] m = refMean[c], s = refStd[c];
             tzSum += s[Theta] > 1e-9 ? (kv.Value[Theta] - m[Theta]) / s[Theta] : 0.0;
             azSum += s[Alpha] > 1e-9 ? (kv.Value[Alpha] - m[Alpha]) / s[Alpha] : 0.0;
             used.Add(c); n++;

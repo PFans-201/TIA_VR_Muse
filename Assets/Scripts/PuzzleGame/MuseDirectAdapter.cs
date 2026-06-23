@@ -207,6 +207,17 @@ public class MuseDirectAdapter : MonoBehaviour, IMuseBaselineControl
     }
     public void ResetBaseline()       => _proc.Reset();
 
+    // ── New 3-scene flow (IntroController / TutorialController) ────────────────
+    // These drive the dual (rest + tutorial-active) baseline directly on the
+    // MuseDirectAdapter.Instance (the numbered session-flow scenes use the direct
+    // BLE path). See [[redesign-session-flow]].
+    /// Commits the rest reference (end of the intro scene). False if no stable channel.
+    public bool FinalizeRestBaseline()  => _proc.FinalizeRestBaseline();
+    /// Starts the tutorial phase: streams stress vs REST while collecting the active reference.
+    public void StartTutorialBaseline() => _proc.StartTutorialActive();
+    /// Peak stress (vs rest) seen during the tutorial — drives the difficulty recommendation.
+    public float PeakTutorialStress     => _proc.PeakTutorialStress;
+
     private void OnDestroy()
     {
         try { _ble?.Disconnect(); } catch { }

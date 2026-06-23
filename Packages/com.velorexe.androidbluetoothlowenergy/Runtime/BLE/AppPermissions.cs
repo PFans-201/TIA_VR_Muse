@@ -102,7 +102,7 @@ namespace Android.BLE
             yield return null;
             allPermissionsGrantedEvent.Invoke();
             yield break;
-#endif
+#else
 
             Dictionary<string, PermissionData> permissions = new Dictionary<string, PermissionData>();
             int apiVersion = getAPIVersion();
@@ -141,6 +141,7 @@ namespace Android.BLE
                     Application.Quit();
                 }
             };
+#pragma warning disable 618 // PermissionDeniedAndDontAskAgain is deprecated but still the only signal for this case on current Unity
             Callbacks.PermissionDeniedAndDontAskAgain += (string permissionName) =>
             {
                 Debug.LogWarning($"Permission {permissionName} denied and don't ask again");
@@ -150,6 +151,7 @@ namespace Android.BLE
                     Application.Quit();
                 }
             };
+#pragma warning restore 618
             Callbacks.PermissionGranted += (string permissionName) =>
             {
                 Debug.Log($"Permission {permissionName} granted");
@@ -182,6 +184,7 @@ namespace Android.BLE
                 }
                 somePermissionsDeniedEvent.Invoke();
             }
+#endif
 
         }
 

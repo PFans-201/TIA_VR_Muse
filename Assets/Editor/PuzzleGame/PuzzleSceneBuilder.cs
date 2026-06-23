@@ -2,8 +2,12 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.Rendering;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+using UnityEngine.XR.Interaction.Toolkit;
+using UnityEngine.XR.Interaction.Toolkit.Inputs.Simulation;
 using UnityEngine.XR.Interaction.Toolkit.Interactables;
 using UnityEngine.XR.Interaction.Toolkit.UI;
 using TMPro;
@@ -28,9 +32,15 @@ public static class PuzzleSceneBuilder
     private const string k_ZenScene     = "Assets/Scenes/ZenPuzzleRoom.unity";
     private const string k_XRRigPrefab  = "Assets/VRTemplateAssets/Prefabs/Setup/Complete XR Origin Set Up Variant.prefab";
 
+    // Redesigned 3-scene session flow (Intro → Tutorial → Game).
+    private const string k_IntroScene   = "Assets/Scenes/01_Intro.unity";
+    private const string k_Tut2Scene    = "Assets/Scenes/02_Tutorial.unity";
+    private const string k_GameScene    = "Assets/Scenes/03_Game.unity";
+    private const string k_SimPrefab    = "Assets/Samples/XR Interaction Toolkit/3.3.1/XR Interaction Simulator/XR Interaction Simulator.prefab";
+
     // ── Menu items ───────────────────────────────────────────────────────────
 
-    [MenuItem("Puzzle Game/Build All Scenes")]
+    // (internal) builds the legacy 3 scenes; kept so the puzzle template can be regenerated.
     public static void BuildAll()
     {
         EnsureFolderPath(k_MatDir);
@@ -44,7 +54,7 @@ public static class PuzzleSceneBuilder
         Debug.Log("[PuzzleSceneBuilder] All scenes built. Check File > Build Settings for scene order.");
     }
 
-    [MenuItem("Puzzle Game/Build Tutorial Room Only")]
+    // (internal, legacy)
     public static void BuildTutorialOnly()
     {
         EnsureFolderPath(k_MatDir);
@@ -53,7 +63,7 @@ public static class PuzzleSceneBuilder
         AssetDatabase.Refresh();
     }
 
-    [MenuItem("Puzzle Game/Build Entry Hall Only")]
+    // (internal, legacy)
     public static void BuildEntryOnly()
     {
         EnsureFolderPath(k_MatDir);
@@ -62,7 +72,7 @@ public static class PuzzleSceneBuilder
         AssetDatabase.Refresh();
     }
 
-    [MenuItem("Puzzle Game/Build Zen Puzzle Room Only")]
+    // (internal, legacy) the puzzle template the Game scene is generated from.
     public static void BuildZenOnly()
     {
         EnsureFolderPath(k_MatDir);
@@ -71,44 +81,407 @@ public static class PuzzleSceneBuilder
         AssetDatabase.Refresh();
     }
 
-    /// Converts the CURRENTLY OPEN scene from the UDP bridge source (Mode A/B) to the
-    /// on-device direct-BLE source (Mode C, standalone Quest): adds a persistent
-    /// GameObject with MuseDirectAdapter + VelorexeBleTransport wired to the same
-    /// CognitiveLoadAdapter, and disables MuseUdpAdapter so they don't both drive
-    /// stress. TutorialManager auto-prefers the direct adapter for baselines, so no
-    /// other wiring changes. Run this on TutorialRoom AND ZenPuzzleRoom, then build
-    /// for Android. (Reversible: delete the MuseDirectAdapter object and re-enable
-    /// MuseUdpAdapter to go back to the PC bridge.)
-    [MenuItem("Puzzle Game/Enable Direct BLE on Quest (current scene)")]
-    public static void EnableDirectBleInCurrentScene()
+    // ── Scene prep for Quest (one button, applied to ALL relevant scenes) ─────
+
+    private static readonly string[] k_AllScenes = { k_IntroScene, k_Tut2Scene, k_GameScene };
+
+    /// ONE BUTTON. Prepares every built scene for an on-device Quest build:
+    ///   • VR UI input — adds a TrackedDeviceGraphicRaycaster to each canvas and makes
+    ///     the EventSystem use the XR UI Input Module (so controller rays hit the UI).
+    ///   • Direct BLE — on the scenes that consume stress, swaps the EEG source to
+    ///     MuseDirectAdapter + VelorexeBleTransport and disables MuseUdpAdapter.
+    /// Opens, edits and saves each scene for you — no per-scene clicking.
+    // (internal) the session-flow build already preps scenes; kept for manual re-prep.
+    public static void PrepareScenesForQuest()
     {
-        var cola = Object.FindFirstObjectByType<CognitiveLoadAdapter>();
-        if (cola == null)
+        ForEachScene(k_AllScenes, () =>
         {
-            Debug.LogError("[PuzzleSceneBuilder] No CognitiveLoadAdapter in the open scene. " +
-                           "Open a built scene (TutorialRoom or ZenPuzzleRoom) first.");
+            int rc   = ApplyVRUIFix();
+            bool ble = ApplyDirectBle();
+            return $"VR-UI raycasters +{rc}; direct BLE {(ble ? "added" : "n/a")}";
+        });
+        Debug.Log("[PuzzleSceneBuilder] All scenes prepared for Quest. " +
+                  "Switch platform to Android, then Build And Run.");
+    }
+
+    /// Just the VR UI input fix across all scenes (useful for any VR build, not only
+    /// the Quest direct-BLE path).
+    [MenuItem("Puzzle Game/Fix VR UI Input (all scenes)")]
+    public static void FixVRUIInputAllScenes()
+    {
+        ForEachScene(k_AllScenes, () => $"VR-UI raycasters +{ApplyVRUIFix()}");
+        Debug.Log("[PuzzleSceneBuilder] VR UI input fixed in all scenes. " +
+                  "Ensure the XR rig's ray interactor has 'UI Interaction' enabled.");
+    }
+
+    /// Adds the head-locked Muse connection/stress debug HUD to every scene (on-device
+    /// testing without a PC). Remove before release.
+    [MenuItem("Puzzle Game/Add Muse Status HUD (all scenes)")]
+    public static void AddMuseStatusHudAllScenes()
+    {
+        ForEachScene(k_AllScenes, () =>
+        {
+            if (Object.FindFirstObjectByType<MuseStatusHUD>() != null) return "already present";
+            new GameObject("MuseStatusHUD").AddComponent<MuseStatusHUD>();
+            return "HUD added";
+        });
+        Debug.Log("[PuzzleSceneBuilder] Muse status HUD added to all scenes.");
+    }
+
+    /// Adds the XR Device Simulator to every scene so you can drive the headset +
+    /// controllers (and GRAB objects / click UI) with mouse + keyboard in the Editor,
+    /// no headset needed. It is wrapped in EditorOnlyObject so it self-destroys in Quest
+    /// builds. In Play mode: move the mouse to look; hold L/R controller keys (see the
+    /// XR Device Simulator docs / on-screen hints) and click to grip/select.
+    [MenuItem("Puzzle Game/Add XR Device Simulator (all scenes, Editor test)")]
+    public static void AddXRDeviceSimulatorAllScenes()
+    {
+        // Use the fully-wired sample prefab (it carries the required Action Assets — a
+        // bare XRDeviceSimulator component has none and just warns).
+        var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(k_SimPrefab);
+        if (prefab == null)
+        {
+            Debug.LogError("[PuzzleSceneBuilder] 'XR Interaction Simulator' sample not found at\n  " +
+                           k_SimPrefab + "\nImport it via Package Manager > XR Interaction Toolkit > " +
+                           "Samples > XR Interaction Simulator, then run this again.");
             return;
         }
-        if (Object.FindFirstObjectByType<MuseDirectAdapter>() != null)
+        ForEachScene(k_AllScenes, () =>
         {
-            Debug.Log("[PuzzleSceneBuilder] Direct-BLE already enabled in this scene.");
-            return;
+            if (Object.FindFirstObjectByType<XRInteractionSimulator>(FindObjectsInactive.Include) != null)
+                return "already present";
+            var go = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+            go.AddComponent<EditorOnlyObject>();   // never ships to the Quest
+            return "simulator added";
+        });
+        Debug.Log("[PuzzleSceneBuilder] XR Interaction Simulator added to all scenes (Editor-only). " +
+                  "Enter Play mode to drive controllers + grab with mouse/keyboard.");
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SESSION FLOW (redesign): 3 scenes — Intro -> Tutorial -> Game
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// Builds the redesigned 3-scene flow and makes it the active build (Intro = scene 0):
+    ///   01_Intro    — explanation + 20 s rest baseline, then auto-advance
+    ///   02_Tutorial — control practice + interaction baseline (min 40 s) + Continue
+    ///   03_Game     — difficulty selection (with Muse recommendation) + puzzle
+    /// The Game scene is derived from ZenPuzzleRoom, so build that first (Build All Scenes).
+    [MenuItem("Puzzle Game/Build Session Flow Scenes (Intro-Tutorial-Game)")]
+    public static void BuildSessionFlowScenes()
+    {
+        if (BlockedByPlayMode()) return;
+        if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+        EnsureFolderPath(k_MatDir);
+
+        BuildIntroScene();
+        BuildTutorialFlowScene();
+        if (!BuildGameScene()) return;   // aborts if ZenPuzzleRoom is missing
+
+        SetBuildSettingsScenes(k_IntroScene, k_Tut2Scene, k_GameScene);   // Intro = index 0
+        AssetDatabase.SaveAssets();
+        AssetDatabase.Refresh();
+        Debug.Log("[PuzzleSceneBuilder] Session flow built: 01_Intro -> 02_Tutorial -> 03_Game. " +
+                  "Build Settings now start at 01_Intro. These scenes are already VR/BLE-prepped.");
+    }
+
+    private static bool BlockedByPlayMode()
+    {
+        if (EditorApplication.isPlayingOrWillChangePlaymode)
+        {
+            Debug.LogError("[PuzzleSceneBuilder] Exit Play mode before running scene tools.");
+            return true;
+        }
+        return false;
+    }
+
+    /// Replaces the Build Settings scene list (so index 0 is what we pass first).
+    private static void SetBuildSettingsScenes(params string[] scenePaths)
+    {
+        var scenes = new EditorBuildSettingsScene[scenePaths.Length];
+        for (int i = 0; i < scenePaths.Length; i++)
+            scenes[i] = new EditorBuildSettingsScene(scenePaths[i], true);
+        EditorBuildSettings.scenes = scenes;
+    }
+
+    // ── Scene 1: Intro (explanation + rest baseline) ──────────────────────────
+    private static void BuildIntroScene()
+    {
+        var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        AddDirectionalLight(new Color(0.96f, 0.96f, 0.95f), 0.60f, Quaternion.Euler(50f, 20f, 0f));
+        SetAmbientFlat(new Color(0.34f, 0.34f, 0.34f));
+        AddFloor(Vector3.zero, 8f, 8f, GetOrCreateMat("Floor_Intro", new Color(0.82f, 0.82f, 0.82f)));
+        AddWalls(8f, 8f, 3f, GetOrCreateMat("Wall_Intro", new Color(0.88f, 0.88f, 0.88f)));
+
+        SpawnXRRig(new Vector3(0f, 0f, -2.5f), new Vector3(0f, 1.7f, 1.6f));
+
+        // Persistent EEG source (connects on the first scene, holds baselines across scenes).
+        var cola = new GameObject("CognitiveLoadAdapter").AddComponent<CognitiveLoadAdapter>();
+        cola.hintThreshold = 0.55f;
+        var eegGO  = new GameObject("MuseDirectAdapter");
+        var direct = eegGO.AddComponent<MuseDirectAdapter>();
+        eegGO.AddComponent<VelorexeBleTransport>();
+        direct.deviceNameContains = "Muse";   // cognitiveLoad left null -> auto-targets active scene's CLA
+
+        var intro = new GameObject("IntroController").AddComponent<IntroController>();
+        intro.nextScene   = "02_Tutorial";
+        intro.restSeconds = 20f;
+        BuildIntroUI(intro, new Vector3(0f, 1.6f, 1.6f));
+
+        ApplyVRUIFix();
+        EditorSceneManager.SaveScene(scene, k_IntroScene);
+        Debug.Log($"[PuzzleSceneBuilder] Saved {k_IntroScene}");
+    }
+
+    private static void BuildIntroUI(IntroController intro, Vector3 pos)
+    {
+        var root = new GameObject("IntroCanvas");
+        root.transform.position = pos;
+        var canvas = root.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+        root.GetComponent<RectTransform>().sizeDelta = new Vector2(740f, 500f);
+        root.transform.localScale = Vector3.one * 0.003f;
+        root.AddComponent<CanvasScaler>();
+        AddInteractiveRaycasters(root);
+
+        var panel = AddUIPanel(root, "ExplanationPanel", Vector2.zero, new Vector2(740f, 500f),
+                               new Color(0.92f, 0.92f, 0.92f, 0.97f));
+        MakeUIText(panel.transform, "Title", "Before we start",
+                   new Vector2(0f, 190f), new Vector2(680f, 70f), 40, new Color(0.18f, 0.18f, 0.18f));
+        MakeUIText(panel.transform, "Body",
+                   "For the next 20 seconds, please stand still and stay as relaxed as possible, " +
+                   "with your eyes open.\n\nThis lets us measure your calm resting baseline so the " +
+                   "game can adapt to you.\n\nWhen you understand, press OK to begin.",
+                   new Vector2(0f, 0f), new Vector2(660f, 250f), 24, new Color(0.22f, 0.22f, 0.22f));
+        var okay = MakeButton(panel.transform, "OkayButton", "OK", new Vector2(0f, -190f), new Vector2(220f, 56f));
+
+        var countGO = new GameObject("Countdown");
+        countGO.transform.SetParent(root.transform, false);
+        var crt = countGO.AddComponent<RectTransform>();
+        crt.anchoredPosition = Vector2.zero;
+        crt.sizeDelta        = new Vector2(700f, 120f);
+        var count = countGO.AddComponent<TextMeshProUGUI>();
+        count.fontSize  = 46;
+        count.alignment = TextAlignmentOptions.Center;
+        count.color     = new Color(0.18f, 0.18f, 0.18f);
+        countGO.SetActive(false);
+
+        intro.explanationPanel = panel;
+        intro.okayButton       = okay;
+        intro.countdownLabel   = count;
+    }
+
+    // ── Scene 2: Tutorial (control practice + interaction baseline) ────────────
+    private static void BuildTutorialFlowScene()
+    {
+        var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        AddDirectionalLight(new Color(0.97f, 0.96f, 0.93f), 0.70f, Quaternion.Euler(45f, -30f, 0f));
+        SetAmbientFlat(new Color(0.38f, 0.38f, 0.38f));
+        var tableMat = GetOrCreateMat("Table_Tutorial", new Color(0.94f, 0.94f, 0.94f));
+        AddFloor(Vector3.zero, 8f, 9f, GetOrCreateMat("Floor_Tutorial", new Color(0.80f, 0.80f, 0.80f)));
+        AddWalls(8f, 9f, 3f, GetOrCreateMat("Wall_Tutorial", new Color(0.88f, 0.88f, 0.88f)));
+        SpawnXRRig(new Vector3(0f, 0f, -3.5f), new Vector3(0f, 1.4f, 1.8f));
+
+        var cola = new GameObject("CognitiveLoadAdapter").AddComponent<CognitiveLoadAdapter>();
+        cola.hintThreshold = 0.55f;
+
+        // Grab practice shelf + active grab objects (the persistent MuseDirectAdapter from
+        // the intro scene carries over and feeds this scene's CognitiveLoadAdapter).
+        AddBox("GrabShelf", new Vector3(0f, 0.55f, 1.8f), new Vector3(1.6f, 0.08f, 0.40f), tableMat);
+        var grabMats = new[]
+        {
+            GetOrCreateMat("GrabObj_Red",    new Color(0.85f, 0.38f, 0.38f)),
+            GetOrCreateMat("GrabObj_Blue",   new Color(0.38f, 0.55f, 0.85f)),
+            GetOrCreateMat("GrabObj_Yellow", new Color(0.90f, 0.82f, 0.30f)),
+            GetOrCreateMat("GrabObj_Green",  new Color(0.38f, 0.75f, 0.45f)),
+        };
+        float gx = -0.55f;
+        foreach (var mat in grabMats)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            go.name = "GrabSphere";
+            go.transform.position   = new Vector3(gx, 0.87f, 1.8f);
+            go.transform.localScale = Vector3.one * 0.14f;
+            go.GetComponent<Renderer>().material = mat;
+            go.AddComponent<Rigidbody>().mass = 0.15f;
+            go.AddComponent<XRGrabInteractable>();
+            gx += 0.37f;
+        }
+        AddBox("Pedestal_Left",  new Vector3(-0.7f, 0.55f, 0.5f), new Vector3(0.30f, 1.1f, 0.30f), tableMat);
+        AddBox("Pedestal_Right", new Vector3( 0.7f, 0.55f, 0.5f), new Vector3(0.30f, 1.1f, 0.30f), tableMat);
+
+        var tut = new GameObject("TutorialController").AddComponent<TutorialController>();
+        tut.nextScene  = "03_Game";
+        tut.minSeconds = 40f;
+        BuildTutorialFlowUI(tut, new Vector3(0f, 1.8f, 2.8f));
+
+        ApplyVRUIFix();
+        EditorSceneManager.SaveScene(scene, k_Tut2Scene);
+        Debug.Log($"[PuzzleSceneBuilder] Saved {k_Tut2Scene}");
+    }
+
+    private static void BuildTutorialFlowUI(TutorialController tut, Vector3 pos)
+    {
+        var root = new GameObject("TutorialCanvas");
+        root.transform.position = pos;
+        var canvas = root.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+        root.GetComponent<RectTransform>().sizeDelta = new Vector2(740f, 560f);
+        root.transform.localScale = Vector3.one * 0.003f;
+        root.AddComponent<CanvasScaler>();
+        AddInteractiveRaycasters(root);
+
+        var info = AddUIPanel(root, "InfoPanel", new Vector2(0f, 70f), new Vector2(740f, 380f),
+                              new Color(0.92f, 0.92f, 0.92f, 0.97f));
+        MakeUIText(info.transform, "Title", "Get used to VR",
+                   new Vector2(0f, 140f), new Vector2(680f, 60f), 38, new Color(0.18f, 0.18f, 0.18f));
+        MakeUIText(info.transform, "Body",
+                   "Use the thumbstick to move and turn.\n\nReach toward an object on the shelf and " +
+                   "squeeze the grip button to pick it up; release to drop it on a pedestal.\n\n" +
+                   "Take your time getting comfortable.",
+                   new Vector2(0f, -20f), new Vector2(660f, 240f), 24, new Color(0.22f, 0.22f, 0.22f));
+
+        var timer = MakeUIText(root.transform, "Timer", "",
+                               new Vector2(0f, -150f), new Vector2(700f, 50f), 26, new Color(0.20f, 0.20f, 0.20f));
+
+        var proceed = AddUIPanel(root, "ProceedPanel", new Vector2(0f, -210f), new Vector2(740f, 150f),
+                                 new Color(0.88f, 0.92f, 0.88f, 0.97f));
+        MakeUIText(proceed.transform, "ProceedText",
+                   "You can continue now, or stay longer to get comfortable.",
+                   new Vector2(0f, 35f), new Vector2(680f, 60f), 24, new Color(0.20f, 0.20f, 0.20f));
+        var cont = MakeButton(proceed.transform, "ContinueButton", "Continue",
+                              new Vector2(0f, -35f), new Vector2(240f, 54f));
+        proceed.SetActive(false);
+
+        tut.infoPanels     = info;
+        tut.proceedPanel   = proceed;
+        tut.continueButton = cont;
+        tut.timerLabel     = timer;
+    }
+
+    // ── Scene 3: Game (difficulty selection + puzzle, derived from ZenPuzzleRoom) ──
+    private static bool BuildGameScene()
+    {
+        // The game scene is generated from the puzzle template; build the template once
+        // if it isn't there yet (keeps the flow self-contained — no separate menu needed).
+        if (AssetDatabase.LoadAssetAtPath<SceneAsset>(k_ZenScene) == null)
+            BuildZenPuzzleRoomScene();
+        if (AssetDatabase.LoadAssetAtPath<SceneAsset>(k_ZenScene) == null)
+        {
+            Debug.LogError("[PuzzleSceneBuilder] Could not generate the puzzle template (ZenPuzzleRoom).");
+            return false;
+        }
+        if (AssetDatabase.LoadAssetAtPath<SceneAsset>(k_GameScene) != null)
+            AssetDatabase.DeleteAsset(k_GameScene);
+        AssetDatabase.CopyAsset(k_ZenScene, k_GameScene);
+        AssetDatabase.Refresh();
+
+        var scene = EditorSceneManager.OpenScene(k_GameScene, OpenSceneMode.Single);
+        ApplyDirectBle();   // ensure on-device BLE source (idempotent)
+        ApplyVRUIFix();     // ensure VR interaction
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+        Debug.Log($"[PuzzleSceneBuilder] Saved {k_GameScene} (from ZenPuzzleRoom)");
+        return true;
+    }
+
+    /// World-space button: Image + Button + centred TMP label. Returns the Button.
+    private static Button MakeButton(Transform parent, string name, string label,
+                                     Vector2 anchoredPos, Vector2 size)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, false);
+        var rt = go.AddComponent<RectTransform>();
+        rt.anchoredPosition = anchoredPos;
+        rt.sizeDelta        = size;
+        go.AddComponent<UnityEngine.UI.Image>().color = new Color(0.60f, 0.78f, 0.60f);
+        var btn = go.AddComponent<Button>();
+
+        var lblGO = new GameObject("Label");
+        lblGO.transform.SetParent(go.transform, false);
+        lblGO.AddComponent<RectTransform>().sizeDelta = size - new Vector2(16f, 8f);
+        var lbl = lblGO.AddComponent<TextMeshProUGUI>();
+        lbl.text      = label;
+        lbl.fontSize  = 26;
+        lbl.alignment = TextAlignmentOptions.Center;
+        lbl.color     = Color.white;
+        return btn;
+    }
+
+    // ── open-scene operations (no save; ForEachScene handles open/save) ────────
+
+    /// Adds a TrackedDeviceGraphicRaycaster to every root canvas in the open scene and
+    /// ensures the EventSystem runs the XR UI Input Module. Returns canvases touched.
+    private static int ApplyVRUIFix()
+    {
+        int added = 0;
+        foreach (var canvas in Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+        {
+            if (!canvas.isRootCanvas) continue;
+            if (canvas.GetComponent<TrackedDeviceGraphicRaycaster>() == null)
+            {
+                canvas.gameObject.AddComponent<TrackedDeviceGraphicRaycaster>();
+                added++;
+            }
+        }
+        var es = Object.FindFirstObjectByType<EventSystem>(FindObjectsInactive.Include);
+        if (es == null) es = new GameObject("EventSystem").AddComponent<EventSystem>();
+        if (es.GetComponent<XRUIInputModule>() == null)
+        {
+            foreach (var m in es.GetComponents<BaseInputModule>()) Object.DestroyImmediate(m);
+            es.gameObject.AddComponent<XRUIInputModule>();
         }
 
+        // ANY XR interaction (UI rays AND grab objects) needs an XRInteractionManager in
+        // the scene. The rig prefab usually carries one, but ensure it so grab/UI never
+        // silently fails for want of a manager.
+        if (Object.FindFirstObjectByType<XRInteractionManager>(FindObjectsInactive.Include) == null)
+            new GameObject("XR Interaction Manager").AddComponent<XRInteractionManager>();
+
+        return added;
+    }
+
+    /// Swaps the open scene's EEG source to on-device direct BLE. Returns true if it
+    /// added the adapter (scene has a CognitiveLoadAdapter and none was present yet).
+    private static bool ApplyDirectBle()
+    {
+        var cola = Object.FindFirstObjectByType<CognitiveLoadAdapter>();
+        if (cola == null) return false;                                          // scene doesn't consume stress
+        if (Object.FindFirstObjectByType<MuseDirectAdapter>() != null) return false;  // already done
+
         var udp = Object.FindFirstObjectByType<MuseUdpAdapter>();
-        if (udp != null) udp.enabled = false;   // stop the UDP source feeding stress too
+        if (udp != null) udp.enabled = false;                                    // don't double-drive stress
 
         var go     = new GameObject("MuseDirectAdapter");
         var direct = go.AddComponent<MuseDirectAdapter>();
         go.AddComponent<VelorexeBleTransport>();
         direct.cognitiveLoad      = cola;
         direct.deviceNameContains = "Muse";
+        return true;
+    }
 
-        EditorSceneManager.MarkSceneDirty(go.scene);
-        EditorSceneManager.SaveOpenScenes();
-        Debug.Log("[PuzzleSceneBuilder] Direct BLE enabled: added MuseDirectAdapter + " +
-                  "VelorexeBleTransport, disabled MuseUdpAdapter. Switch the platform to " +
-                  "Android and Build And Run on the Quest.");
+    /// Opens each scene in turn, runs <paramref name="op"/>, saves it, then restores
+    /// the scene that was open before. Skips missing scene files.
+    private static void ForEachScene(string[] scenePaths, System.Func<string> op)
+    {
+        if (BlockedByPlayMode()) return;
+        if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+        string original = SceneManager.GetActiveScene().path;
+        foreach (var path in scenePaths)
+        {
+            if (AssetDatabase.LoadAssetAtPath<SceneAsset>(path) == null)
+            {
+                Debug.LogWarning($"[PuzzleSceneBuilder] Scene not found, skipping: {path}");
+                continue;
+            }
+            var scene = EditorSceneManager.OpenScene(path, OpenSceneMode.Single);
+            string result = op();
+            EditorSceneManager.MarkSceneDirty(scene);
+            EditorSceneManager.SaveScene(scene);
+            Debug.Log($"[PuzzleSceneBuilder]   {System.IO.Path.GetFileNameWithoutExtension(path)}: {result}");
+        }
+        if (!string.IsNullOrEmpty(original))
+            EditorSceneManager.OpenScene(original, OpenSceneMode.Single);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -146,7 +519,7 @@ public static class PuzzleSceneBuilder
         portal.targetSceneName = "ZenPuzzleRoom";
         portal.transitionDelay = 0.5f;
 
-        SpawnXRRig(new Vector3(0f, 0f, -2f));
+        SpawnXRRig(new Vector3(0f, 0f, -2f), new Vector3(0f, 1.6f, 1.0f));   // face the entrance sign / content
         AddWorldText("EntranceSign", new Vector3(0f, 2.2f, 1.0f),
                      "Walk through the archway\nto begin the puzzle");
 
@@ -180,7 +553,7 @@ public static class PuzzleSceneBuilder
         AddFloor(Vector3.zero, 8f, 9f, floorMat);
         AddWalls(8f, 9f, 3f, wallMat);
 
-        SpawnXRRig(new Vector3(0f, 0f, -3.5f));
+        SpawnXRRig(new Vector3(0f, 0f, -3.5f), new Vector3(0f, 1.8f, 2.8f));   // face the tutorial panel
 
         // ── Rest zone — soft green disc on floor where participant stands during baseline ──
         var restZone = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
@@ -277,10 +650,7 @@ public static class PuzzleSceneBuilder
         rt.sizeDelta = new Vector2(700f, 520f);
         root.transform.localScale = Vector3.one * 0.003f;
         root.AddComponent<CanvasScaler>();
-        // TrackedDeviceGraphicRaycaster is required so Quest controller ray-interactors
-        // can hit this world-space canvas. The standard GraphicRaycaster only responds
-        // to mouse/pointer events and is invisible to XR tracked devices.
-        root.AddComponent<TrackedDeviceGraphicRaycaster>();
+        AddInteractiveRaycasters(root);
 
         // Background panel
         var bg = AddUIPanel(root, "Background", Vector2.zero, new Vector2(700f, 520f),
@@ -382,7 +752,7 @@ public static class PuzzleSceneBuilder
         // Central puzzle table  (top surface at y = 1.0)
         AddBox("PuzzleTable", new Vector3(0f, 0.5f, 0f), new Vector3(1.4f, 1.0f, 1.4f), tableMat);
 
-        SpawnXRRig(new Vector3(0f, 0f, -3f));
+        SpawnXRRig(new Vector3(0f, 0f, -3f), new Vector3(0f, 1.0f, 0f));   // face the puzzle table
 
         // ── Systems ───────────────────────────────────────────────────────
         var colaGO = new GameObject("CognitiveLoadAdapter");
@@ -594,10 +964,7 @@ public static class PuzzleSceneBuilder
         var canvas = root.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.WorldSpace;
         root.AddComponent<CanvasScaler>();
-        // TrackedDeviceGraphicRaycaster is required so Quest controller ray-interactors
-        // can hit this world-space canvas. The standard GraphicRaycaster only responds
-        // to mouse/pointer events and is invisible to XR tracked devices.
-        root.AddComponent<TrackedDeviceGraphicRaycaster>();
+        AddInteractiveRaycasters(root);
 
         var rootRT = root.GetComponent<RectTransform>();
         rootRT.sizeDelta  = new Vector2(620f, 480f);
@@ -713,18 +1080,25 @@ public static class PuzzleSceneBuilder
         return go;
     }
 
-    private static void SpawnXRRig(Vector3 pos)
+    /// Spawns the XR rig at <paramref name="pos"/> and yaws it so the player's default
+    /// forward faces <paramref name="faceTarget"/> (the panel/table). Yaw only, so the
+    /// horizon stays level. NOTE: in VR the headset's real orientation is applied on top
+    /// of this, so the player should recenter (or use a recenter-on-start) to actually
+    /// face the content — this just sets the authored default.
+    private static void SpawnXRRig(Vector3 pos, Vector3 faceTarget)
     {
         var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(k_XRRigPrefab);
-        if (prefab != null)
-        {
-            var rig = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
-            rig.transform.position = pos;
-        }
-        else
+        if (prefab == null)
         {
             Debug.LogWarning($"[PuzzleSceneBuilder] XR Rig prefab not found:\n  {k_XRRigPrefab}");
+            return;
         }
+        var rig = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+        rig.transform.position = pos;
+
+        Vector3 flat = faceTarget - pos; flat.y = 0f;
+        if (flat.sqrMagnitude > 0.0001f)
+            rig.transform.rotation = Quaternion.LookRotation(flat.normalized, Vector3.up);
     }
 
     private static void AddWorldText(string goName, Vector3 pos, string text)
@@ -744,6 +1118,14 @@ public static class PuzzleSceneBuilder
     // ════════════════════════════════════════════════════════════════════════
     // UI helpers
     // ════════════════════════════════════════════════════════════════════════
+
+    /// World-space UI needs both raycasters: GraphicRaycaster for mouse (Editor) and
+    /// TrackedDeviceGraphicRaycaster for VR controller rays on the Quest.
+    private static void AddInteractiveRaycasters(GameObject canvasGO)
+    {
+        canvasGO.AddComponent<GraphicRaycaster>();
+        canvasGO.AddComponent<TrackedDeviceGraphicRaycaster>();
+    }
 
     private static GameObject MakePanel(Transform parent, string name, Color bgColor)
     {

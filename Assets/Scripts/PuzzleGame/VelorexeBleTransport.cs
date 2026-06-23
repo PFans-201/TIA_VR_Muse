@@ -244,7 +244,9 @@ public class VelorexeBleTransport : MonoBehaviour, IMuseBleTransport
         var cb = new PermissionCallbacks();
         cb.PermissionGranted               += p => { Debug.Log($"[VelorexeBleTransport] Permission granted: {p}");              _permsPending--; };
         cb.PermissionDenied                += p => { Debug.LogWarning($"[VelorexeBleTransport] Permission denied: {p}");         _permsPending--; };
+#pragma warning disable 618 // PermissionDeniedAndDontAskAgain deprecated but still the only "don't ask again" signal on current Unity
         cb.PermissionDeniedAndDontAskAgain += p => { Debug.LogError($"[VelorexeBleTransport] Permission perm-denied: {p}");     _permsPending--; };
+#pragma warning restore 618
         Permission.RequestUserPermissions(needed.ToArray(), cb);
 
         // Wait for callbacks using a coroutine timer — NOT Time.unscaledDeltaTime inside
