@@ -7,13 +7,17 @@ using Unity.XR.CoreUtils;
 /// Why: in VR the rig's authored transform only sets the play-space origin — the
 /// headset's real-world position/orientation is applied on top. After a scene
 /// transition (e.g. Tutorial → Game) the player's physical offset carries over, so a
-/// freshly-placed rig can leave them standing on the wrong side of the room. Opening
-/// the scene directly happens to work only because the player is centred at that
-/// moment. Recentring on Start makes the spawn deterministic in both cases.
+/// freshly-placed rig can leave them standing on the wrong side of the room.
+///
+/// CRITICAL TIMING: the recenter must run AFTER the XR tracking pose has been applied
+/// to the camera for the frame — doing it in Start (before the HMD pose arrives) snaps
+/// to a stale camera position and the real pose then displaces the player again. So we
+/// recenter across the first few LateUpdates (once tracking is live) and then stop, so
+/// the player is free to move afterwards.
 ///
 /// Put this on the XR Origin root (the scene builder adds it). Yaw-only rotation keeps
 /// the horizon level; the camera height is preserved so we never yank the player up/down.
-[DefaultExecutionOrder(100)]   // after XR Origin / tracking has initialised this frame
+[DefaultExecutionOrder(100)]
 public class XRSpawnRecenter : MonoBehaviour
 {
     [Tooltip("World position the player's head should start at (x/z used; y uses the live camera height).")]
@@ -22,18 +26,25 @@ public class XRSpawnRecenter : MonoBehaviour
     [Tooltip("World point the player should face on spawn (yaw only).")]
     public Vector3 faceTarget = Vector3.zero;
 
-    [Tooltip("Also recenter whenever this component is re-enabled, not just on the first Start.")]
-    public bool recenterOnEnable = true;
+    [Tooltip("Recenter on these frames after enable, giving XR tracking time to provide a valid pose.")]
+    public int firstRecenterFrame = 2;
+    public int lastRecenterFrame  = 8;
 
     private XROrigin _origin;
+    private int _frame;
+    private bool _done;
 
     private void Awake() => _origin = GetComponent<XROrigin>();
 
-    private void Start() => Recenter();
+    private void OnEnable() { _frame = 0; _done = false; }
 
-    private void OnEnable()
+    private void LateUpdate()
     {
-        if (recenterOnEnable && _origin != null) Recenter();
+        if (_done) return;
+        _frame++;
+        if (_frame < firstRecenterFrame) return;   // let the HMD pose apply first
+        Recenter();
+        if (_frame >= lastRecenterFrame) _done = true;
     }
 
     /// Public so a "Recenter" button / input action can call it too.

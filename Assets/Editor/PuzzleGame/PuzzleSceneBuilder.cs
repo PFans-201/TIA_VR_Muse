@@ -866,7 +866,7 @@ public static class PuzzleSceneBuilder
         cont.interiorSize   = new Vector3(7.4f, 2.7f, 7.4f);
 
         // ── Hard mode: dark room + grabbable forearm lantern ──────────────
-        var lantern = BuildLantern(new Vector3(0.45f, 1.15f, -0.45f));   // on the table, reachable
+        var lantern = BuildLantern(new Vector3(0f, 1.2f, -1.5f));   // floats in front of the player, reachable
         var darkGO  = new GameObject("HardModeDarkroom");
         var dark    = darkGO.AddComponent<HardModeDarkroom>();
         dark.roomLights    = roomLights.ToArray();
@@ -1160,35 +1160,29 @@ public static class PuzzleSceneBuilder
         go.name = "Lantern";
         go.transform.position   = pos;
         go.transform.localScale = new Vector3(0.08f, 0.10f, 0.08f);
-        go.GetComponent<Renderer>().material = GetOrCreateMat("Lantern", new Color(0.95f, 0.85f, 0.45f));
+        // Emissive body so the lantern is the ONLY thing visible in the pitch-black room —
+        // it glows by itself without casting light on the walls/floor.
+        go.GetComponent<Renderer>().material =
+            GetOrCreateEmissiveMat("Lantern", new Color(1f, 0.85f, 0.45f), 4f);
 
         go.AddComponent<Rigidbody>().mass = 0.3f;
         go.AddComponent<XRGrabInteractable>();
 
-        // Spotlight aims along the lantern's local forward — once clipped to the forearm
-        // that becomes the arm direction.
+        // Beam — OFF until grabbed (ArmLantern enables it). Aims along the lantern's local
+        // forward, which becomes the arm direction once clipped to the forearm.
         var spotGO = new GameObject("LanternSpot");
         spotGO.transform.SetParent(go.transform, false);
         var spot = spotGO.AddComponent<Light>();
         spot.type      = LightType.Spot;
         spot.color     = new Color(1f, 0.93f, 0.75f);
-        spot.intensity = 5f;
-        spot.range     = 10f;
-        spot.spotAngle = 80f;
+        spot.intensity = 6f;
+        spot.range     = 12f;
+        spot.spotAngle = 75f;
         spot.shadows   = LightShadows.None;
+        spot.enabled   = false;
 
-        // Small always-on glow so the lantern is visible (findable) in the dark room
-        // before the player grabs it.
-        var glowGO = new GameObject("LanternGlow");
-        glowGO.transform.SetParent(go.transform, false);
-        var glow = glowGO.AddComponent<Light>();
-        glow.type      = LightType.Point;
-        glow.color     = new Color(1f, 0.88f, 0.6f);
-        glow.intensity = 1.5f;
-        glow.range     = 2.5f;
-        glow.shadows   = LightShadows.None;
-
-        go.AddComponent<ArmLantern>();
+        var lantern = go.AddComponent<ArmLantern>();
+        lantern.beam = spot;
         go.SetActive(false);
         return go;
     }
@@ -1318,6 +1312,23 @@ public static class PuzzleSceneBuilder
         }
 
         mat.color = color;
+        AssetDatabase.CreateAsset(mat, path);
+        return mat;
+    }
+
+    /// Self-illuminated material — renders its colour as emission so the object stays
+    /// visible even in a pitch-black room without lighting its surroundings.
+    private static Material GetOrCreateEmissiveMat(string matName, Color color, float emission)
+    {
+        var path = $"{k_MatDir}/{matName}.mat";
+        var mat  = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (mat != null) return mat;
+
+        var shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+        mat = new Material(shader) { name = matName, color = color };
+        mat.EnableKeyword("_EMISSION");
+        mat.SetColor("_EmissionColor", color * emission);
+        mat.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
         AssetDatabase.CreateAsset(mat, path);
         return mat;
     }

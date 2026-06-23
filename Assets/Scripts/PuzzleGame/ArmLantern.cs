@@ -19,6 +19,9 @@ public class ArmLantern : MonoBehaviour
     [Tooltip("Local euler tilt so the spotlight aims slightly ahead of the arm.")]
     public Vector3 aimTilt = new Vector3(25f, 0f, 0f);
 
+    [Tooltip("The lantern's beam (spotlight). Stays OFF until grabbed, then lights the arm direction.")]
+    public Light beam;
+
     private XRGrabInteractable _grab;
     private Rigidbody _rb;
     private bool _attached;
@@ -27,6 +30,9 @@ public class ArmLantern : MonoBehaviour
     {
         _grab = GetComponent<XRGrabInteractable>();
         _rb   = GetComponent<Rigidbody>();
+        // Beam is dark until the player actually grabs the lantern — before that the
+        // room stays pitch black and only the (emissive) lantern body is visible.
+        if (beam != null) beam.enabled = false;
     }
 
     private void OnEnable()  => _grab.selectEntered.AddListener(OnGrabbed);
@@ -49,6 +55,9 @@ public class ArmLantern : MonoBehaviour
 
         if (_rb != null) { _rb.isKinematic = true; _rb.useGravity = false; }
         foreach (var col in GetComponentsInChildren<Collider>()) col.enabled = false;
+
+        // Now light up — the beam reveals whatever the arm points at.
+        if (beam != null) beam.enabled = true;
 
         // Release it from the grab interaction so the hand is immediately free to grab
         // pieces, and disable further grabbing so it can never be dropped.

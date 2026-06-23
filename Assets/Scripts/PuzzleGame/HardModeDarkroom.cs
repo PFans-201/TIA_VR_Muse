@@ -20,8 +20,8 @@ public class HardModeDarkroom : MonoBehaviour
     [Tooltip("Ambient colour while lit (restored when leaving hard mode).")]
     public Color litAmbient = new Color(0.32f, 0.32f, 0.32f);
 
-    [Tooltip("Ambient colour in the dark (near-black so the lantern matters).")]
-    public Color darkAmbient = new Color(0.015f, 0.015f, 0.02f);
+    [Tooltip("Ambient colour in the dark — pure black so nothing but the lantern is visible.")]
+    public Color darkAmbient = Color.black;
 
     private void OnEnable()
     {
