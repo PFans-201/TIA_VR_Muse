@@ -6,14 +6,14 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/Scenes/EntryHall.unity
-    guid: 10474b87ee9451505aef01b779cd650a
+    path: Assets/Scenes/01_Intro.unity
+    guid: 9eb8e5203ec4e6ca1b0b49b732417e92
   - enabled: 1
-    path: Assets/Scenes/TutorialRoom.unity
-    guid: aa815e52b4ce16ea08c94c1851111844
+    path: Assets/Scenes/02_Tutorial.unity
+    guid: 757168d5c7618664aafb84d8e927c776
   - enabled: 1
-    path: Assets/Scenes/ZenPuzzleRoom.unity
-    guid: c0af672da754dee25980ea5e35780d24
+    path: Assets/Scenes/03_Game.unity
+    guid: c5a9d6bc2da6b975a8719ee60af695ef
   m_configObjects:
     Unity.XR.Oculus.Settings: {fileID: 11400000, guid: bfa1182bd221b4ca89619141f66f1260, type: 2}
     Unity.XR.WindowsMR.Settings: {fileID: 11400000, guid: dc5a169419fa04987b057f65238cf3ba, type: 2}
