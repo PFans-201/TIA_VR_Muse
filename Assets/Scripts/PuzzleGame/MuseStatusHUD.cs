@@ -92,27 +92,45 @@ public class MuseStatusHUD : MonoBehaviour
     {
         if (_statusLabel == null) return;
 
+        // Try direct BLE adapter first; fall back to UDP adapter (WiFi mode)
         var mda = MuseDirectAdapter.Instance;
-        if (mda == null)
+        var udp = MuseUdpAdapter.Instance;
+        if (mda == null && udp == null)
         {
-            _statusLabel.text = $"<color={HexErr}>●</color>  MuseDirectAdapter not in scene";
+            _statusLabel.text = $"<color={HexErr}>●</color>  No Muse adapter in scene";
             return;
         }
 
-        string status = mda.Status;
+        // Prefer MuseDirectAdapter when present; otherwise use UDP adapter
+        string status;
+        float stressLevel = 0.5f;
+        bool contact = false;
+        if (mda != null)
+        {
+            status = mda.Status;
+            stressLevel = mda.StressLevel;
+            contact = mda.Contact;
+        }
+        else
+        {
+            status = udp.Status;
+            stressLevel = udp.StressLevel;
+            contact = udp.Receiving;
+        }
+
         string hex;
         if      (status.Contains("streaming"))                                       hex = HexOK;
         else if (status.Contains("connecting") || status.Contains("subscribing") ||
                  status.Contains("sending")    || status.Contains("GATT") ||
                  status.Contains("commands"))                                         hex = HexConn;
-        else if (status.Contains("scanning"))                                        hex = HexScan;
+        else if (status.Contains("scanning") || status.Contains("listening"))         hex = HexScan;
         else if (status.Contains("no ") || status.Contains("error") ||
                  status.Contains("Error") || status.Contains("failed"))              hex = HexErr;
         else                                                                         hex = HexScan;
 
         string extra = status.Contains("streaming")
-            ? $"   stress: <b>{mda.StressLevel:F3}</b>   " +
-              $"contact: {(mda.Contact ? $"<color={HexOK}><b>✓</b></color>" : $"<color={HexErr}><b>✗</b></color>")}"
+            ? $"   stress: <b>{stressLevel:F3}</b>   " +
+              $"contact: {(contact ? $"<color={HexOK}><b>✓</b></color>" : $"<color={HexErr}><b>✗</b></color>")}"
             : string.Empty;
 
         _statusLabel.text = $"<color={hex}>●</color>  {status}{extra}";
@@ -122,12 +140,27 @@ public class MuseStatusHUD : MonoBehaviour
     void AddSample()
     {
         var mda = MuseDirectAdapter.Instance;
-        if (mda == null) return;
+        var udp = MuseUdpAdapter.Instance;
 
-        var r = mda.LastReading;
-        _sBuf[_head] = r.stress;
-        _tBuf[_head] = Mathf.InverseLerp(-3f, 3f, r.thetaZ);  // ±3σ → 0–1
-        _aBuf[_head] = Mathf.InverseLerp(-3f, 3f, r.alphaZ);
+        float stress, thetaZ, alphaZ, cli;
+        string channels;
+
+        if (mda != null)
+        {
+            var r = mda.LastReading;
+            stress = r.stress; thetaZ = r.thetaZ; alphaZ = r.alphaZ;
+            cli = r.cli; channels = r.usedChannels;
+        }
+        else if (udp != null)
+        {
+            stress = udp.StressLevel; thetaZ = udp.ThetaZ; alphaZ = udp.AlphaZ;
+            cli = udp.Cli; channels = udp.Receiving ? "WiFi" : "—";
+        }
+        else return;
+
+        _sBuf[_head] = stress;
+        _tBuf[_head] = Mathf.InverseLerp(-3f, 3f, thetaZ);  // ±3σ → 0–1
+        _aBuf[_head] = Mathf.InverseLerp(-3f, 3f, alphaZ);
         _head = (_head + 1) % GraphW;
         _hasData = true;
 
@@ -135,11 +168,11 @@ public class MuseStatusHUD : MonoBehaviour
         if (_valuesLabel != null)
         {
             _valuesLabel.text =
-                $"<color={HexOK}>stress {r.stress:F3}</color>    " +
-                $"<color=#50A0FF>θz {r.thetaZ:+0.00;-0.00;+0.00}</color>    " +
-                $"<color=#FF9628>αz {r.alphaZ:+0.00;-0.00;+0.00}</color>    " +
-                $"CLI {r.cli:+0.00;-0.00;+0.00}    " +
-                $"ch: <b>{(string.IsNullOrEmpty(r.usedChannels) ? "—" : r.usedChannels)}</b>";
+                $"<color={HexOK}>stress {stress:F3}</color>    " +
+                $"<color=#50A0FF>θz {thetaZ:+0.00;-0.00;+0.00}</color>    " +
+                $"<color=#FF9628>αz {alphaZ:+0.00;-0.00;+0.00}</color>    " +
+                $"CLI {cli:+0.00;-0.00;+0.00}    " +
+                $"ch: <b>{(string.IsNullOrEmpty(channels) ? "—" : channels)}</b>";
         }
     }
 

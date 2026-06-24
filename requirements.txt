@@ -11,3 +11,9 @@
 brainflow==5.22.2
 numpy==2.4.6
 simplepyble==0.14.0
+
+# WiFi bridge (Quest 2 over hotspot) — used by Tools/muse_lsl_bridge.py
+# muselsl connects to the Muse via Bluetooth on the Mac and exposes an LSL stream.
+# pylsl reads that stream so the bridge can forward EEG data to the Quest over UDP.
+muselsl
+pylsl
