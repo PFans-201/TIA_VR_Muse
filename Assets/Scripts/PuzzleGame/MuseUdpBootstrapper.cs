@@ -28,7 +28,7 @@ public static class MuseUdpBootstrapper
     // ── Edit these before building to the Quest ──────────────────────────────
     // The IP address of your Mac on the iPhone hotspot network.
     // Find it via: System Settings → Wi-Fi → Details → IP Address
-    private const string DefaultBridgeHost = "127.0.0.1";
+    private const string DefaultBridgeHost = "172.20.10.2";
     private const int    DefaultPort       = 5005;
     private const int    DefaultControlPort = 5006;
 

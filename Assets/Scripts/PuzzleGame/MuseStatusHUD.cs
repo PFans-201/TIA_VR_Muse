@@ -101,11 +101,19 @@ public class MuseStatusHUD : MonoBehaviour
             return;
         }
 
-        // Prefer MuseDirectAdapter when present; otherwise use UDP adapter
+        // Prefer UDP if actively receiving, otherwise prefer Direct BLE, else UDP
         string status;
         float stressLevel = 0.5f;
         bool contact = false;
-        if (mda != null)
+        bool useUdp = udp != null && (udp.Receiving || mda == null);
+
+        if (useUdp)
+        {
+            status = udp.Status;
+            stressLevel = udp.StressLevel;
+            contact = udp.Receiving;
+        }
+        else if (mda != null)
         {
             status = mda.Status;
             stressLevel = mda.StressLevel;
@@ -113,9 +121,7 @@ public class MuseStatusHUD : MonoBehaviour
         }
         else
         {
-            status = udp.Status;
-            stressLevel = udp.StressLevel;
-            contact = udp.Receiving;
+            status = "No adapter";
         }
 
         string hex;
@@ -145,16 +151,18 @@ public class MuseStatusHUD : MonoBehaviour
         float stress, thetaZ, alphaZ, cli;
         string channels;
 
-        if (mda != null)
+        bool useUdp = udp != null && (udp.Receiving || mda == null);
+
+        if (useUdp)
+        {
+            stress = udp.StressLevel; thetaZ = udp.ThetaZ; alphaZ = udp.AlphaZ;
+            cli = udp.Cli; channels = udp.Receiving ? "WiFi" : "—";
+        }
+        else if (mda != null)
         {
             var r = mda.LastReading;
             stress = r.stress; thetaZ = r.thetaZ; alphaZ = r.alphaZ;
             cli = r.cli; channels = r.usedChannels;
-        }
-        else if (udp != null)
-        {
-            stress = udp.StressLevel; thetaZ = udp.ThetaZ; alphaZ = udp.AlphaZ;
-            cli = udp.Cli; channels = udp.Receiving ? "WiFi" : "—";
         }
         else return;
 
@@ -233,14 +241,19 @@ public class MuseStatusHUD : MonoBehaviour
     void BuildHUD()
     {
         Camera cam = Camera.main;
+        if (cam == null && Camera.allCamerasCount > 0)
+        {
+            cam = Camera.allCameras[0];
+        }
+
         if (cam == null)
         {
             _buildRetries++;
             if (_buildRetries >= MaxBuildRetries)
             {
-                Debug.LogError("[MuseStatusHUD] Camera.main not found after " +
+                Debug.LogError("[MuseStatusHUD] Camera not found after " +
                                $"{MaxBuildRetries} retries — HUD disabled. " +
-                               "Tag your XR camera as 'MainCamera'.");
+                               "Make sure there is an active Camera in the scene.");
                 enabled = false;
                 return;
             }

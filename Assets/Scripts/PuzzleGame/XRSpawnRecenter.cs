@@ -34,7 +34,15 @@ public class XRSpawnRecenter : MonoBehaviour
     private int _frame;
     private bool _done;
 
-    private void Awake() => _origin = GetComponent<XROrigin>();
+    private void Awake()
+    {
+        _origin = GetComponent<XROrigin>();
+        if (_origin != null)
+        {
+            _origin.RequestedTrackingOriginMode = Unity.XR.CoreUtils.XROrigin.TrackingOriginMode.Floor;
+            _origin.CameraYOffset = 1.6f;
+        }
+    }
 
     private void OnEnable() { _frame = 0; _done = false; }
 
