@@ -1284,11 +1284,13 @@ public static class PuzzleSceneBuilder
         return root;
     }
 
-    /// Spawns the XR rig at <paramref name="pos"/> and yaws it so the player's default
-    /// forward faces <paramref name="faceTarget"/> (the panel/table). Yaw only, so the
-    /// horizon stays level. NOTE: in VR the headset's real orientation is applied on top
-    /// of this, so the player should recenter (or use a recenter-on-start) to actually
-    /// face the content — this just sets the authored default.
+    /// Spawns the XR rig at <paramref name="pos"/>. Deliberately minimal — matches the known-good
+    /// feature/muse-debug-hud setup: instantiate the prefab and place it, nothing else.
+    /// We do NOT rotate the rig, add XRSpawnRecenter, or override the tracking origin:
+    ///   • The runtime recenter manipulated the XR Origin/camera and broke head tracking on Quest.
+    ///   • Forcing FLOOR tracking buried the player in the floor (Stationary-boundary headsets).
+    ///   • The rooms are laid out so the rig's default +Z forward already faces the content.
+    /// faceTarget is kept in the signature for call-site compatibility but is intentionally unused.
     private static void SpawnXRRig(Vector3 pos, Vector3 faceTarget)
     {
         var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(k_XRRigPrefab);
@@ -1299,22 +1301,6 @@ public static class PuzzleSceneBuilder
         }
         var rig = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
         rig.transform.position = pos;
-
-        Vector3 flat = faceTarget - pos; flat.y = 0f;
-        if (flat.sqrMagnitude > 0.0001f)
-            rig.transform.rotation = Quaternion.LookRotation(flat.normalized, Vector3.up);
-
-        // NOTE: leave the rig's tracking origin at the prefab default (NotSpecified). Forcing
-        // FLOOR here regressed on-device — on a Quest with only a Stationary boundary, Stage/Floor
-        // has no valid floor height and the player ends up buried in the floor. NotSpecified uses
-        // the camera Y offset and keeps the player at standing height (matches the working builds).
-
-        // Recenter the player's head to this spawn pose at runtime so a scene transition
-        // (e.g. Tutorial → Game) can't leave them standing on the wrong side of the room.
-        var recenter = rig.GetComponent<XRSpawnRecenter>();
-        if (recenter == null) recenter = rig.AddComponent<XRSpawnRecenter>();
-        recenter.spawnPosition = pos;
-        recenter.faceTarget    = faceTarget;
     }
 
     private static void AddWorldText(string goName, Vector3 pos, string text)
