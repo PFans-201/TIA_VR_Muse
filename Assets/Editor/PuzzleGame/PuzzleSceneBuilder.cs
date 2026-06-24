@@ -1304,12 +1304,10 @@ public static class PuzzleSceneBuilder
         if (flat.sqrMagnitude > 0.0001f)
             rig.transform.rotation = Quaternion.LookRotation(flat.normalized, Vector3.up);
 
-        // FLOOR tracking origin — the base rig prefab ships as NotSpecified, which on Quest
-        // places the player INSIDE the floor (head at y≈0) and jams the CharacterController so
-        // they can't move. Floor maps the physical floor to y=0 and uses real headset height.
-        var origin = rig.GetComponent<Unity.XR.CoreUtils.XROrigin>();
-        if (origin != null)
-            origin.RequestedTrackingOriginMode = Unity.XR.CoreUtils.XROrigin.TrackingOriginMode.Floor;
+        // NOTE: leave the rig's tracking origin at the prefab default (NotSpecified). Forcing
+        // FLOOR here regressed on-device — on a Quest with only a Stationary boundary, Stage/Floor
+        // has no valid floor height and the player ends up buried in the floor. NotSpecified uses
+        // the camera Y offset and keeps the player at standing height (matches the working builds).
 
         // Recenter the player's head to this spawn pose at runtime so a scene transition
         // (e.g. Tutorial → Game) can't leave them standing on the wrong side of the room.
