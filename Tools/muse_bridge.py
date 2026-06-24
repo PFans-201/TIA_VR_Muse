@@ -94,7 +94,8 @@ START_CMDS  = ("h", "p1041", "s", "d")  # halt, Athena preset, status, start
 RMS_MIN, RMS_MAX = 0.5, 800.0
 RAIL_UV = 990.0      # near the 12-bit saturation limit (~±1000 µV) => bad contact
 SMOOTH_ALPHA = 0.25
-THETA, ALPHA = 1, 2  # indices into the band vector
+DELTA, THETA, ALPHA, BETA, GAMMA = 0, 1, 2, 3, 4  # indices into the band vector
+BAND_NAMES = ["delta", "theta", "alpha", "beta", "gamma"]
 # [delta, theta, alpha, beta, gamma]
 BANDS = [(1.0, 4.0), (4.0, 8.0), (8.0, 13.0), (13.0, 30.0), (30.0, 45.0)]
 
@@ -153,22 +154,95 @@ def finalize_baseline(samples):
             for name, v in samples.items() if len(v) >= max(3, n // 2)}
 
 
-def stress_from_bp(bp, base):
-    """Per-channel z-scores vs the (active-VR) baseline, averaged over the channels
-    present in both. Returns (theta_z, alpha_z, cli, used) or None if no overlap."""
-    tz, az, used = [], [], []
+def band_zscores(bp, base):
+    """Per-channel z-scores of every band vs the baseline, averaged over the channels
+    present in both `bp` and `base`. Returns (z_vector[5], used_channel_names) where
+    z_vector is [delta_z, theta_z, alpha_z, beta_z, gamma_z], or None if no overlap."""
+    rows, used = [], []
     for name, vec in bp.items():
         if name not in base:
             continue
         m, s = base[name]
-        tz.append((vec[THETA] - m[THETA]) / s[THETA] if s[THETA] > 1e-9 else 0.0)
-        az.append((vec[ALPHA] - m[ALPHA]) / s[ALPHA] if s[ALPHA] > 1e-9 else 0.0)
+        z = [(vec[b] - m[b]) / s[b] if s[b] > 1e-9 else 0.0 for b in range(len(vec))]
+        rows.append(z)
         used.append(name)
     if not used:
         return None
-    theta_z = float(np.mean(tz))
-    alpha_z = float(np.mean(az))
-    return theta_z, alpha_z, (theta_z - alpha_z) / 2.0, used
+    return list(np.mean(rows, axis=0)), used
+
+
+def indices_from_z(z, sensitivity):
+    """Map averaged band z-scores -> three 0..1 cognitive indices, each squashed with the
+    same sigmoid(raw / sensitivity) so they share one axis. All are measured ABOVE the
+    committed (active-VR) baseline, i.e. 0.5 == "same as baseline".
+        cognitive_load : (theta_z - alpha_z)/2   frontal theta up, alpha down  (== legacy "stress")
+        attention      : (beta_z - (alpha_z+theta_z)/2)/2   Pope engagement index
+        stress         : (beta_z - alpha_z)/2    beta/arousal up, alpha down
+    Returns a dict of the three RAW (un-smoothed) 0..1 values plus the contributing z-scores."""
+    theta_z, alpha_z, beta_z = z[THETA], z[ALPHA], z[BETA]
+    cli   = (theta_z - alpha_z) / 2.0
+    eng   = (beta_z - (alpha_z + theta_z) / 2.0) / 2.0
+    arous = (beta_z - alpha_z) / 2.0
+    return {
+        "cognitive_load": sigmoid(cli   / sensitivity),
+        "attention":      sigmoid(eng   / sensitivity),
+        "stress":         sigmoid(arous / sensitivity),
+        "theta_z": theta_z, "alpha_z": alpha_z, "beta_z": beta_z, "cli": cli,
+    }
+
+
+class IndexSmoother:
+    """Independent EMA smoothing for the three 0..1 indices (each starts neutral at 0.5)."""
+    KEYS = ("stress", "attention", "cognitive_load")
+
+    def __init__(self):
+        self.v = {k: 0.5 for k in self.KEYS}
+
+    def update(self, raw):
+        for k in self.KEYS:
+            s = SMOOTH_ALPHA * raw[k] + (1 - SMOOTH_ALPHA) * self.v[k]
+            self.v[k] = max(0.0, min(1.0, s))
+        return dict(self.v)
+
+
+class Recorder:
+    """Appends one CSV row per tick (timestamp, phase, mean band powers, z-scores and the
+    three smoothed 0..1 indices) so a session can be re-plotted offline by muse_plot.py.
+    Phase transitions are recoverable from the `phase` column; muse_plot draws them as
+    labelled vertical lines."""
+    COLUMNS = (["iso_time", "t", "phase", "contact", "used"]
+               + BAND_NAMES
+               + ["theta_z", "alpha_z", "beta_z", "stress", "attention", "cognitive_load"])
+
+    def __init__(self, path):
+        self.path = path
+        self.t0 = time.time()
+        self._f = open(path, "w", buffering=1)   # line-buffered so a live plotter can tail it
+        self._f.write(",".join(self.COLUMNS) + "\n")
+
+    def row(self, phase, bands_mean, contact, used, z=None, idx=None):
+        def num(x):
+            return "" if x is None or (isinstance(x, float) and math.isnan(x)) else f"{x:.5g}"
+        vals = [time.strftime("%Y-%m-%dT%H:%M:%S"), f"{time.time() - self.t0:.3f}",
+                phase, "1" if contact else "0", "+".join(used) if used else ""]
+        vals += [num(bands_mean.get(b) if bands_mean else None) for b in BAND_NAMES]
+        vals += [num(z[i] if z else None) for i in (THETA, ALPHA, BETA)]
+        vals += [num(idx[k] if idx else None) for k in ("stress", "attention", "cognitive_load")]
+        self._f.write(",".join(vals) + "\n")
+
+    def close(self):
+        try:
+            self._f.close()
+        except Exception:
+            pass
+
+
+def mean_band_powers(bp):
+    """{name: band vector} -> {band_name: mean power across good channels}, or {} if none."""
+    if not bp:
+        return {}
+    arr = np.mean(list(bp.values()), axis=0)
+    return {name: float(arr[i]) for i, name in enumerate(BAND_NAMES)}
 
 
 # ── BLE reader ────────────────────────────────────────────────────────────────
@@ -274,7 +348,7 @@ class MuseReader:
 
 
 # ── Session ─────────────────────────────────────────────────────────────────--
-def run_session(args, send):
+def run_session(args, send, recorder=None):
     reader = MuseReader(name=args.name, mac=args.mac, window_secs=args.window)
     reader.connect()
     print("[OK]   Connected and streaming.\n")
@@ -303,6 +377,8 @@ def run_session(args, send):
                   f"θ={mt:.2f} α={ma:.2f}  ch={'+'.join(bp)}", end="\r")
             send({"phase": "baseline", "progress": pct / 100.0,
                   "stress": 0.5, "contact": True})
+            if recorder is not None:
+                recorder.row("baseline", mean_band_powers(bp), True, list(bp))
         print()
 
         # keep channels seen in at least half the baseline windows
@@ -320,9 +396,9 @@ def run_session(args, send):
         print(f"{'='*60}\nPHASE 2 — ACTIVE MONITORING"
               f"{'' if args.duration == 0 else f' ({args.duration:.0f}s)'}\n"
               "Start your task. Ctrl+C to stop.\n" + "=" * 60)
-        print(f"{'Elapsed':>8} {'θ z':>8} {'α z':>8} {'CLI':>8} {'Stress':>8}  ch")
+        print(f"{'Elapsed':>8} {'Stress':>8} {'Atten':>8} {'CogLoad':>8}  ch")
         print("-" * 56)
-        smoothed = 0.5
+        smoother = IndexSmoother()
         t0 = time.time()
         while args.duration == 0 or time.time() - t0 < args.duration:
             time.sleep(args.update)
@@ -330,36 +406,30 @@ def run_session(args, send):
             window, _ = reader.get_window(args.window)
             bp = per_channel_band_powers(window, SAMPLE_RATE) if window is not None else {}
 
-            # average per-channel z-scores over channels present in BOTH now & baseline
-            tz, az, used = [], [], []
-            for name, vec in bp.items():
-                if name not in base:
-                    continue
-                m, s = base[name]
-                tz.append((vec[THETA] - m[THETA]) / s[THETA] if s[THETA] > 1e-9 else 0.0)
-                az.append((vec[ALPHA] - m[ALPHA]) / s[ALPHA] if s[ALPHA] > 1e-9 else 0.0)
-                used.append(name)
-            if not used:
+            res = band_zscores(bp, base)   # avg z-scores over channels in BOTH now & baseline
+            if res is None:
                 print(f"{elapsed:7.1f}s  [poor signal — adjust headset]")
-                send({"phase": "active", "stress": smoothed, "contact": False})
+                send({"phase": "active", "stress": smoother.v["stress"], "contact": False})
+                if recorder is not None:
+                    recorder.row("active", mean_band_powers(bp), False, None)
                 continue
 
-            theta_z = float(np.mean(tz))
-            alpha_z = float(np.mean(az))
-            cli = (theta_z - alpha_z) / 2.0
-            raw = sigmoid(cli / args.sensitivity)
-            smoothed = max(0.0, min(1.0, SMOOTH_ALPHA * raw + (1 - SMOOTH_ALPHA) * smoothed))
-            print(f"{elapsed:7.1f}s {theta_z:+8.2f} {alpha_z:+8.2f} "
-                  f"{cli:+8.2f} {smoothed:8.3f}  {'+'.join(used)}")
-            send({"phase": "active", "stress": smoothed, "theta_z": theta_z,
-                  "alpha_z": alpha_z, "cli": cli, "contact": True})
+            z, used = res
+            raw = indices_from_z(z, args.sensitivity)
+            idx = smoother.update(raw)
+            print(f"{elapsed:7.1f}s {idx['stress']:8.3f} {idx['attention']:8.3f} "
+                  f"{idx['cognitive_load']:8.3f}  {'+'.join(used)}")
+            send({"phase": "active", "contact": True, "theta_z": raw["theta_z"],
+                  "alpha_z": raw["alpha_z"], "beta_z": raw["beta_z"], "cli": raw["cli"], **idx})
+            if recorder is not None:
+                recorder.row("active", mean_band_powers(bp), True, used, z, idx)
         print("\n[OK] Session complete.")
     finally:
         reader.disconnect()
         print("[OK] Disconnected.")
 
 
-def run_session_unity(args, send, ctrl_sock):
+def run_session_unity(args, send, ctrl_sock, recorder=None):
     """Command-driven mode for the VR game: Unity's TutorialManager drives the dual
     baseline. States: idle -> rest -> idle -> active -> streaming. The bridge keeps
     computing band powers every tick; the rest/active states accumulate them, and on
@@ -394,7 +464,7 @@ def run_session_unity(args, send, ctrl_sock):
     rest = collections.defaultdict(list)
     active = collections.defaultdict(list)
     base = {}
-    smoothed = 0.5
+    smoother = IndexSmoother()
     try:
         while True:
             time.sleep(args.update)
@@ -425,28 +495,40 @@ def run_session_unity(args, send, ctrl_sock):
 
             window, _ = reader.get_window(args.window)
             bp = per_channel_band_powers(window, SAMPLE_RATE) if window is not None else {}
+            bands_mean = mean_band_powers(bp)
+
+            def record(phase, contact, used=None, z=None, idx=None):
+                if recorder is not None:
+                    recorder.row(phase, bands_mean, contact, used, z, idx)
 
             if state == "rest":
                 for n, v in bp.items():
                     rest[n].append(v)
                 send({"phase": "baseline_rest", "stress": 0.5, "contact": bool(bp)})
+                record("baseline_rest", bool(bp), list(bp))
             elif state == "active":
                 for n, v in bp.items():
                     active[n].append(v)
                 send({"phase": "baseline_active", "stress": 0.5, "contact": bool(bp)})
+                record("baseline_active", bool(bp), list(bp))
             elif state == "streaming":
-                res = stress_from_bp(bp, base)
+                res = band_zscores(bp, base)
                 if res is None:
-                    send({"phase": "active", "stress": smoothed, "contact": False})
+                    send({"phase": "active", "stress": smoother.v["stress"], "contact": False})
+                    record("active", False)
                     continue
-                theta_z, alpha_z, cli, used = res
-                raw = sigmoid(cli / args.sensitivity)
-                smoothed = max(0.0, min(1.0, SMOOTH_ALPHA * raw + (1 - SMOOTH_ALPHA) * smoothed))
-                send({"phase": "active", "stress": smoothed, "theta_z": theta_z,
-                      "alpha_z": alpha_z, "cli": cli, "contact": True})
-                print(f"  stress={smoothed:.3f}  θz={theta_z:+.2f}  αz={alpha_z:+.2f}  {'+'.join(used)}")
+                z, used = res
+                raw = indices_from_z(z, args.sensitivity)
+                idx = smoother.update(raw)
+                send({"phase": "active", "contact": True,
+                      "theta_z": raw["theta_z"], "alpha_z": raw["alpha_z"],
+                      "beta_z": raw["beta_z"], "cli": raw["cli"], **idx})
+                record("active", True, used, z, idx)
+                print(f"  stress={idx['stress']:.3f} att={idx['attention']:.3f} "
+                      f"cog={idx['cognitive_load']:.3f}  {'+'.join(used)}")
             else:  # idle
                 send({"phase": "idle", "stress": 0.5, "contact": bool(bp)})
+                record("idle", bool(bp), list(bp))
     except KeyboardInterrupt:
         print("\n[INFO] Stopped by user.")
     finally:
@@ -484,6 +566,10 @@ def main():
                          "bridge runs its own single rest baseline.")
     ap.add_argument("--control-port", type=int, default=5006,
                     help="UDP port to receive Unity baseline commands on (--unity mode).")
+    ap.add_argument("--record", nargs="?", const="auto", default=None, metavar="PATH",
+                    help="Log every tick (phase, band powers, the 3 indices) to a CSV for "
+                         "offline/live plotting with Tools/muse_plot.py. Bare --record auto-names "
+                         "Tools/sessions/session_<timestamp>.csv.")
     # Restore real stderr so argparse errors/usage are visible, parse, then re-mute.
     if _SAVED_STDERR_FD is not None:
         os.dup2(_SAVED_STDERR_FD, 2)
@@ -508,14 +594,24 @@ def main():
             sock.sendto((json.dumps(payload) + "\n").encode(),
                         (args.udp_host, args.udp_port))
 
+    recorder = None
+    if args.record is not None:
+        path = args.record
+        if path == "auto":
+            sess_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
+            os.makedirs(sess_dir, exist_ok=True)
+            path = os.path.join(sess_dir, f"session_{time.strftime('%Y%m%d_%H%M%S')}.csv")
+        recorder = Recorder(path)
+        print(f"[INFO] recording -> {path}")
+
     ctrl_sock = None
     try:
         if args.unity:
             ctrl_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             ctrl_sock.bind(("0.0.0.0", args.control_port))
-            run_session_unity(args, send, ctrl_sock)
+            run_session_unity(args, send, ctrl_sock, recorder)
         else:
-            run_session(args, send)
+            run_session(args, send, recorder)
     except KeyboardInterrupt:
         print("\n[INFO] Stopped by user.")
     except Exception as e:
@@ -531,6 +627,8 @@ def main():
                 ctrl_sock.close()
             except Exception:
                 pass
+        if recorder is not None:
+            recorder.close()
 
     # Exit immediately. The SimpleBLE backend's daemon threads emit harmless D-Bus
     # chatter from C++ static destructors at interpreter shutdown (it caches the

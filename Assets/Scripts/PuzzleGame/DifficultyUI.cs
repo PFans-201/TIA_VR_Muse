@@ -1,39 +1,47 @@
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 
-/// Two-step world-space UI: choose a puzzle, then choose a difficulty.
+/// Single-step world-space UI for the robot puzzle: choose a difficulty.
 ///
-/// ProgressionMode.Sequential (default)
-///   Easy is always available. Medium unlocks once Easy is completed.
-///   Hard unlocks once Medium is completed. Locked buttons are dimmed
-///   and non-interactable. After each puzzle completion the UI re-opens
-///   automatically so the player can continue to the next level.
+/// ProgressionMode.FreeChoice (default)
+///   All difficulties are available immediately. Difficulty expresses how much baseline
+///   assistance the player wants; the adaptive system adjusts further from MUSE S readings.
 ///
-/// ProgressionMode.FreeChoice
-///   All difficulties are available immediately — useful for testing
-///   or when the session protocol does not require a fixed order.
+/// ProgressionMode.Sequential
+///   Easy is always available. Medium unlocks once Easy is completed, Hard once Medium is.
+///   Locked buttons are dimmed and non-interactable. After each completion the menu re-opens.
+///
+/// An info (ⓘ) button toggles a panel describing the three difficulty "maps".
 public class DifficultyUI : MonoBehaviour
 {
     [Header("Progression")]
-    [Tooltip("FreeChoice (default): all difficulties selectable immediately — difficulty expresses\n" +
-             "how much baseline assistance the player wants. The adaptive system will adjust\n" +
-             "further based on MUSE S readings regardless of this initial choice.\n\n" +
-             "Sequential: Easy must be completed before Medium unlocks, etc.\n" +
-             "Useful if a fixed progression order is required by the study protocol.")]
+    [Tooltip("FreeChoice (default): all difficulties selectable immediately.\n" +
+             "Sequential: Easy must be completed before Medium unlocks, etc.")]
     public ProgressionMode progressionMode = ProgressionMode.FreeChoice;
 
-    [Header("Step 1 — Puzzle Type")]
-    public GameObject puzzleTypePanel;
-    public Button     snowmanButton;
-    public Button     robotButton;
-
-    [Header("Step 2 — Difficulty")]
+    [Header("Difficulty")]
     public GameObject difficultyPanel;
     public Button     easyButton;
     public Button     mediumButton;
     public Button     hardButton;
+
+    [Header("Per-mode Info (ⓘ badges)")]
+    public Button     easyInfoButton;
+    public Button     mediumInfoButton;
+    public Button     hardInfoButton;
+    public Button     infoCloseButton;
+    public GameObject infoPanel;
+    public TextMeshProUGUI infoTitle;
+    public TextMeshProUGUI infoBody;
+
+    [Header("Per-mode Info content (set by the scene builder)")]
+    [TextArea] public string easyInfoTitle;
+    [TextArea] public string easyInfoBody;
+    [TextArea] public string mediumInfoTitle;
+    [TextArea] public string mediumInfoBody;
+    [TextArea] public string hardInfoTitle;
+    [TextArea] public string hardInfoBody;
 
     [Header("Labels")]
     public TextMeshProUGUI statusLabel;
@@ -43,17 +51,9 @@ public class DifficultyUI : MonoBehaviour
 
     // ── Runtime state ─────────────────────────────────────────────────────────
 
-    private PuzzleType _selectedType;
+    // Highest unlocked difficulty this session (Sequential mode only).
+    private DifficultyLevel _maxUnlocked = DifficultyLevel.Easy;
 
-    // Tracks the highest unlocked DifficultyLevel per puzzle type this session.
-    // Starts at Easy for every type; advances as puzzles are completed.
-    private readonly Dictionary<PuzzleType, DifficultyLevel> _maxUnlocked = new()
-    {
-        { PuzzleType.Snowman, DifficultyLevel.Easy },
-        { PuzzleType.Robot,   DifficultyLevel.Easy },
-    };
-
-    // Original Image colours for the difficulty buttons (stored so we can dim/restore them)
     private Color _easyOrigColor;
     private Color _mediumOrigColor;
     private Color _hardOrigColor;
@@ -62,23 +62,23 @@ public class DifficultyUI : MonoBehaviour
 
     private void Start()
     {
-        // Wire button callbacks
-        if (snowmanButton != null) snowmanButton.onClick.AddListener(OnSnowmanSelected);
-        if (robotButton   != null) robotButton.onClick.AddListener(OnRobotSelected);
-        if (easyButton    != null) easyButton.onClick.AddListener(() => ConfirmDifficulty(DifficultyLevel.Easy));
-        if (mediumButton  != null) mediumButton.onClick.AddListener(() => ConfirmDifficulty(DifficultyLevel.Medium));
-        if (hardButton    != null) hardButton.onClick.AddListener(() => ConfirmDifficulty(DifficultyLevel.Hard));
+        if (easyButton   != null) easyButton.onClick.AddListener(()   => ConfirmDifficulty(DifficultyLevel.Easy));
+        if (mediumButton != null) mediumButton.onClick.AddListener(() => ConfirmDifficulty(DifficultyLevel.Medium));
+        if (hardButton   != null) hardButton.onClick.AddListener(()   => ConfirmDifficulty(DifficultyLevel.Hard));
+        if (easyInfoButton   != null) easyInfoButton.onClick.AddListener(()   => ShowInfo(DifficultyLevel.Easy));
+        if (mediumInfoButton != null) mediumInfoButton.onClick.AddListener(() => ShowInfo(DifficultyLevel.Medium));
+        if (hardInfoButton   != null) hardInfoButton.onClick.AddListener(()   => ShowInfo(DifficultyLevel.Hard));
+        if (infoCloseButton  != null) infoCloseButton.onClick.AddListener(CloseInfo);
 
-        // Cache original button colours before any dimming
         _easyOrigColor   = GetButtonColor(easyButton);
         _mediumOrigColor = GetButtonColor(mediumButton);
         _hardOrigColor   = GetButtonColor(hardButton);
 
-        // Listen for puzzle completion so we can unlock the next difficulty
         if (puzzleManager != null)
             puzzleManager.OnPuzzleCompleted += HandlePuzzleCompleted;
 
-        ShowPuzzleTypeStep();
+        if (infoPanel != null) infoPanel.SetActive(false);
+        ShowDifficultyStep();
     }
 
     private void OnDestroy()
@@ -87,31 +87,15 @@ public class DifficultyUI : MonoBehaviour
             puzzleManager.OnPuzzleCompleted -= HandlePuzzleCompleted;
     }
 
-    // ── Step 1: puzzle type selection ─────────────────────────────────────────
+    // ── Difficulty selection ──────────────────────────────────────────────────
 
-    private void OnSnowmanSelected() => ShowDifficultyStep(PuzzleType.Snowman, "Snowman");
-    private void OnRobotSelected()   => ShowDifficultyStep(PuzzleType.Robot,   "Robot");
-
-    private void ShowPuzzleTypeStep()
+    private void ShowDifficultyStep()
     {
-        if (puzzleTypePanel != null) puzzleTypePanel.SetActive(true);
-        if (difficultyPanel != null) difficultyPanel.SetActive(false);
-        if (statusLabel     != null) statusLabel.text = "Choose a puzzle to assemble";
-    }
-
-    // ── Step 2: difficulty selection ──────────────────────────────────────────
-
-    private void ShowDifficultyStep(PuzzleType type, string typeName)
-    {
-        _selectedType = type;
-        if (puzzleTypePanel != null) puzzleTypePanel.SetActive(false);
         if (difficultyPanel != null) difficultyPanel.SetActive(true);
-        if (statusLabel     != null) statusLabel.text = $"Puzzle: {typeName}";
-
+        if (statusLabel     != null) statusLabel.text = "Choose a difficulty";
         RefreshDifficultyButtons();
     }
 
-    /// Updates button interactability and tint based on the current unlock state.
     private void RefreshDifficultyButtons()
     {
         if (progressionMode == ProgressionMode.FreeChoice)
@@ -122,44 +106,58 @@ public class DifficultyUI : MonoBehaviour
             return;
         }
 
-        DifficultyLevel max = _maxUnlocked.TryGetValue(_selectedType, out var m) ? m : DifficultyLevel.Easy;
-
-        SetButtonLocked(easyButton,   _easyOrigColor,   locked: DifficultyLevel.Easy   > max);
-        SetButtonLocked(mediumButton, _mediumOrigColor, locked: DifficultyLevel.Medium > max);
-        SetButtonLocked(hardButton,   _hardOrigColor,   locked: DifficultyLevel.Hard   > max);
+        SetButtonLocked(easyButton,   _easyOrigColor,   locked: DifficultyLevel.Easy   > _maxUnlocked);
+        SetButtonLocked(mediumButton, _mediumOrigColor, locked: DifficultyLevel.Medium > _maxUnlocked);
+        SetButtonLocked(hardButton,   _hardOrigColor,   locked: DifficultyLevel.Hard   > _maxUnlocked);
     }
 
     private void ConfirmDifficulty(DifficultyLevel level)
     {
-        if (statusLabel != null)
-            statusLabel.text = $"{_selectedType}  ·  {level}";
+        if (statusLabel != null) statusLabel.text = $"Robot  ·  {level}";
 
         if (puzzleManager != null)
-            puzzleManager.StartPuzzle(_selectedType, level);
+            puzzleManager.StartPuzzle(level);
         else
             Debug.LogError("[DifficultyUI] PuzzleManager reference is missing!");
 
         gameObject.SetActive(false);
     }
 
+    // ── Per-mode info ───────────────────────────────────────────────────────────
+
+    private void ShowInfo(DifficultyLevel level)
+    {
+        (string title, string body) = level switch
+        {
+            DifficultyLevel.Easy   => (easyInfoTitle,   easyInfoBody),
+            DifficultyLevel.Medium => (mediumInfoTitle, mediumInfoBody),
+            _                      => (hardInfoTitle,   hardInfoBody),
+        };
+        if (infoTitle != null) infoTitle.text = title;
+        if (infoBody  != null) infoBody.text  = body;
+        if (infoPanel != null) infoPanel.SetActive(true);
+    }
+
+    private void CloseInfo()
+    {
+        if (infoPanel != null) infoPanel.SetActive(false);
+    }
+
     // ── Puzzle completion callback ────────────────────────────────────────────
 
-    private void HandlePuzzleCompleted(PuzzleType type, DifficultyLevel completedLevel)
+    private void HandlePuzzleCompleted(DifficultyLevel completedLevel)
     {
-        // Advance the unlock ceiling for this puzzle type
         DifficultyLevel next = completedLevel switch
         {
             DifficultyLevel.Easy   => DifficultyLevel.Medium,
             DifficultyLevel.Medium => DifficultyLevel.Hard,
-            _                     => DifficultyLevel.Hard,
+            _                      => DifficultyLevel.Hard,
         };
+        if (_maxUnlocked < next) _maxUnlocked = next;
 
-        if (!_maxUnlocked.ContainsKey(type) || _maxUnlocked[type] < next)
-            _maxUnlocked[type] = next;
-
-        // Re-open the UI so the player can continue (the event fires even on an inactive GO)
         gameObject.SetActive(true);
-        ShowPuzzleTypeStep();
+        if (infoPanel != null) infoPanel.SetActive(false);
+        ShowDifficultyStep();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -171,7 +169,6 @@ public class DifficultyUI : MonoBehaviour
         return img != null ? img.color : Color.white;
     }
 
-    /// Dims and disables a button (locked) or restores it to its original colour (unlocked).
     private static void SetButtonLocked(Button btn, Color originalColor, bool locked)
     {
         if (btn == null) return;
@@ -183,7 +180,6 @@ public class DifficultyUI : MonoBehaviour
                             originalColor.b * 0.45f, 0.40f)
                 : originalColor;
 
-        // Also dim the label text so it reads as unavailable
         var label = btn.GetComponentInChildren<TextMeshProUGUI>();
         if (label != null)
             label.color = locked ? new Color(1f, 1f, 1f, 0.35f) : Color.white;

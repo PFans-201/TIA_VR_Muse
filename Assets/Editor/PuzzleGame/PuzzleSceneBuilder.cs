@@ -16,13 +16,13 @@ using TMPro;
 /// USAGE: Puzzle Game  ▶  Build All Scenes
 ///
 /// ZenPuzzleRoom contains:
-///   • Snowman puzzle  (Simple)  — 3 / 5 / 7 pieces
-///   • Robot puzzle    (Complex) — 5 / 8 / 12 pieces
-///   • All pieces start INACTIVE; PuzzleManager activates the right set
+///   • Robot puzzle — one ordered list of 22 pieces; Easy 5 / Medium 12 / Hard 22
+///   • All pieces start INACTIVE; PuzzleManager activates the first N for the chosen difficulty
 ///   • Zen grey environment: walls 87 %, floor 82 %, table near-white
 ///   • Soft neutral directional light + grey ambient
 ///   • CognitiveLoadAdapter + PieceHintSystem for MUSE S integration
-///   • Two-step DifficultyUI: puzzle type → difficulty
+///   • Single-step DifficultyUI (Easy / Medium / Hard) with an info toggle
+///   • HardModeDarkroom (dark on Medium+Hard, obstacles on Hard) + forearm lantern
 public static class PuzzleSceneBuilder
 {
     // ── Asset paths ──────────────────────────────────────────────────────────
@@ -804,33 +804,18 @@ public static class PuzzleSceneBuilder
         var pmGO = new GameObject("PuzzleManager");
         var pm   = pmGO.AddComponent<PuzzleManager>();
         pm.hintSystem   = phs;
+        phs.puzzleManager = pm;   // hint system reads IsDarkRoom for the find-me flicker
         adc.puzzleManager = pm;   // wire adaptive controller → manager
 
         var anchorGO = new GameObject("PuzzleAnchor");
         anchorGO.transform.position = new Vector3(0f, 1.01f, 0f);
         pm.puzzleAnchor = anchorGO.transform;
 
-        // ── Snowman puzzle ────────────────────────────────────────────────
-        //   (n, primitive, world pos, euler, scale, colour)
-        var snowmanDefs = new (string n, PrimitiveType p, Vector3 pos, Vector3 euler, Vector3 scale, Color col)[]
-        {
-            // Easy (3)
-            ("Body",      PrimitiveType.Sphere,   new Vector3( 0.00f, 1.35f, 0f), Vector3.zero,           new Vector3(0.40f, 0.50f, 0.40f), new Color(0.92f, 0.92f, 0.92f)),
-            ("Head",      PrimitiveType.Sphere,   new Vector3( 0.00f, 1.75f, 0f), Vector3.zero,           new Vector3(0.30f, 0.30f, 0.30f), new Color(0.94f, 0.94f, 0.92f)),
-            ("Hat",       PrimitiveType.Cylinder, new Vector3( 0.00f, 2.00f, 0f), Vector3.zero,           new Vector3(0.25f, 0.12f, 0.25f), new Color(0.14f, 0.10f, 0.06f)),
-            // Medium adds arms (5)
-            ("LeftArm",   PrimitiveType.Cylinder, new Vector3(-0.45f, 1.45f, 0f), new Vector3(0f,  0f,  90f), new Vector3(0.09f, 0.28f, 0.09f), new Color(0.75f, 0.68f, 0.55f)),
-            ("RightArm",  PrimitiveType.Cylinder, new Vector3( 0.45f, 1.45f, 0f), new Vector3(0f,  0f, -90f), new Vector3(0.09f, 0.28f, 0.09f), new Color(0.75f, 0.68f, 0.55f)),
-            // Hard adds legs (7)
-            ("LeftLeg",   PrimitiveType.Cylinder, new Vector3(-0.14f, 1.02f, 0f), new Vector3(0f,  0f,  10f), new Vector3(0.12f, 0.28f, 0.12f), new Color(0.88f, 0.88f, 0.86f)),
-            ("RightLeg",  PrimitiveType.Cylinder, new Vector3( 0.14f, 1.02f, 0f), new Vector3(0f,  0f, -10f), new Vector3(0.12f, 0.28f, 0.12f), new Color(0.88f, 0.88f, 0.86f)),
-        };
-
-        var snapRootSnowman = new GameObject("SnapZones_Snowman");
-        BuildPuzzleSet("Snowman", snowmanDefs, snapRootSnowman.transform, pm, isSnowman: true);
-
         // ── Robot puzzle ──────────────────────────────────────────────────
-        //   Assembled on the same anchor (only one set active at a time)
+        //   One ordered list. Each difficulty uses the first N (Easy 5 / Medium 12 / Hard 22).
+        //   The 12 main parts come first (so Easy/Medium use recognisable anatomy); the extra
+        //   detail sub-pieces (panels, plates, bolts, antenna) are appended for Hard only.
+        //   (n, primitive, world pos, euler, scale, colour)
         var robotDefs = new (string n, PrimitiveType p, Vector3 pos, Vector3 euler, Vector3 scale, Color col)[]
         {
             // Easy (5): Head, Torso, LeftArm, RightArm, LeftLeg
@@ -839,21 +824,31 @@ public static class PuzzleSceneBuilder
             ("LeftArm",      PrimitiveType.Cylinder, new Vector3(-0.32f, 1.58f,  0.00f), new Vector3(0f, 0f,  80f), new Vector3(0.09f, 0.25f, 0.09f), new Color(0.62f, 0.68f, 0.72f)),
             ("RightArm",     PrimitiveType.Cylinder, new Vector3( 0.32f, 1.58f,  0.00f), new Vector3(0f, 0f, -80f), new Vector3(0.09f, 0.25f, 0.09f), new Color(0.62f, 0.68f, 0.72f)),
             ("LeftLeg",      PrimitiveType.Cylinder, new Vector3(-0.12f, 1.20f,  0.00f), Vector3.zero,             new Vector3(0.10f, 0.28f, 0.10f), new Color(0.50f, 0.52f, 0.55f)),
-            // Medium adds (8): + RightLeg, LeftForearm, RightForearm
+            // Medium adds (12): + RightLeg, LeftForearm, RightForearm, feet, eyes
             ("RightLeg",     PrimitiveType.Cylinder, new Vector3( 0.12f, 1.20f,  0.00f), Vector3.zero,             new Vector3(0.10f, 0.28f, 0.10f), new Color(0.50f, 0.52f, 0.55f)),
             ("LeftForearm",  PrimitiveType.Cylinder, new Vector3(-0.50f, 1.38f,  0.00f), new Vector3(0f, 0f,  65f), new Vector3(0.07f, 0.20f, 0.07f), new Color(0.58f, 0.62f, 0.65f)),
             ("RightForearm", PrimitiveType.Cylinder, new Vector3( 0.50f, 1.38f,  0.00f), new Vector3(0f, 0f, -65f), new Vector3(0.07f, 0.20f, 0.07f), new Color(0.58f, 0.62f, 0.65f)),
-            // Hard adds (12): + LeftFoot, RightFoot, LeftEye, RightEye
             ("LeftFoot",     PrimitiveType.Cube,     new Vector3(-0.12f, 0.97f,  0.06f), Vector3.zero,             new Vector3(0.16f, 0.07f, 0.24f), new Color(0.42f, 0.44f, 0.46f)),
             ("RightFoot",    PrimitiveType.Cube,     new Vector3( 0.12f, 0.97f,  0.06f), Vector3.zero,             new Vector3(0.16f, 0.07f, 0.24f), new Color(0.42f, 0.44f, 0.46f)),
             ("LeftEye",      PrimitiveType.Sphere,   new Vector3(-0.07f, 1.96f,  0.12f), Vector3.zero,             new Vector3(0.055f,0.055f,0.055f), new Color(0.08f, 0.08f, 0.10f)),
             ("RightEye",     PrimitiveType.Sphere,   new Vector3( 0.07f, 1.96f,  0.12f), Vector3.zero,             new Vector3(0.055f,0.055f,0.055f), new Color(0.08f, 0.08f, 0.10f)),
+            // Hard adds (22): detail sub-pieces — panels, shoulders, neck, antenna, hands, hip, bolts
+            ("ChestPlate",   PrimitiveType.Cube,     new Vector3( 0.00f, 1.56f,  0.115f), Vector3.zero,            new Vector3(0.24f, 0.22f, 0.03f), new Color(0.66f, 0.74f, 0.82f)),
+            ("BackPlate",    PrimitiveType.Cube,     new Vector3( 0.00f, 1.56f, -0.115f), Vector3.zero,            new Vector3(0.24f, 0.22f, 0.03f), new Color(0.48f, 0.55f, 0.62f)),
+            ("LeftShoulder", PrimitiveType.Sphere,   new Vector3(-0.26f, 1.66f,  0.00f), Vector3.zero,             new Vector3(0.12f, 0.12f, 0.12f), new Color(0.70f, 0.74f, 0.78f)),
+            ("RightShoulder",PrimitiveType.Sphere,   new Vector3( 0.26f, 1.66f,  0.00f), Vector3.zero,             new Vector3(0.12f, 0.12f, 0.12f), new Color(0.70f, 0.74f, 0.78f)),
+            ("Neck",         PrimitiveType.Cylinder, new Vector3( 0.00f, 1.74f,  0.00f), Vector3.zero,             new Vector3(0.09f, 0.05f, 0.09f), new Color(0.52f, 0.56f, 0.60f)),
+            ("Antenna",      PrimitiveType.Cylinder, new Vector3( 0.00f, 2.10f,  0.00f), Vector3.zero,             new Vector3(0.02f, 0.10f, 0.02f), new Color(0.85f, 0.40f, 0.30f)),
+            ("LeftHand",     PrimitiveType.Cube,     new Vector3(-0.62f, 1.22f,  0.00f), Vector3.zero,             new Vector3(0.09f, 0.09f, 0.09f), new Color(0.60f, 0.64f, 0.68f)),
+            ("RightHand",    PrimitiveType.Cube,     new Vector3( 0.62f, 1.22f,  0.00f), Vector3.zero,             new Vector3(0.09f, 0.09f, 0.09f), new Color(0.60f, 0.64f, 0.68f)),
+            ("Hip",          PrimitiveType.Cube,     new Vector3( 0.00f, 1.34f,  0.00f), Vector3.zero,             new Vector3(0.30f, 0.10f, 0.20f), new Color(0.46f, 0.50f, 0.54f)),
+            ("ChestBolt",    PrimitiveType.Sphere,   new Vector3( 0.00f, 1.49f,  0.15f), Vector3.zero,             new Vector3(0.05f, 0.05f, 0.05f), new Color(0.90f, 0.78f, 0.30f)),
         };
 
         var snapRootRobot = new GameObject("SnapZones_Robot");
-        BuildPuzzleSet("Robot", robotDefs, snapRootRobot.transform, pm, isSnowman: false);
+        pm.robotPieces = BuildPuzzlePieces(robotDefs, snapRootRobot.transform);
 
-        // ── Two-step Difficulty UI ────────────────────────────────────────
+        // ── Difficulty UI (single step, robot only) ───────────────────────
         BuildDifficultyCanvas(pm, new Vector3(0f, 1.8f, -1.8f));
 
         // ── Ambient instruction text ──────────────────────────────────────
@@ -865,14 +860,21 @@ public static class PuzzleSceneBuilder
         cont.interiorCenter = new Vector3(0f, 1.4f, 0f);
         cont.interiorSize   = new Vector3(7.4f, 2.7f, 7.4f);
 
-        // ── Hard mode: dark room + grabbable forearm lantern ──────────────
+        // ── Hard-mode obstacles (walls / columns / baskets) — shown only on Hard ──
+        var obstacles = BuildHardObstacles();
+
+        // ── Dark room (Medium + Hard) + grabbable forearm lantern ─────────
         var lantern = BuildLantern(new Vector3(0f, 1.2f, -1.5f));   // floats in front of the player, reachable
         var darkGO  = new GameObject("HardModeDarkroom");
         var dark    = darkGO.AddComponent<HardModeDarkroom>();
         dark.roomLights    = roomLights.ToArray();
         dark.lantern       = lantern;
+        dark.obstacleRoot  = obstacles;
         dark.puzzleManager = pm;
         dark.litAmbient    = litAmbient;
+
+        // ── Adaptive-event HUD: shows each adaptive action + its trigger (Muse vs behaviour) ──
+        new GameObject("AdaptiveEventHUD").AddComponent<AdaptiveEventHUD>();
 
         EditorSceneManager.SaveScene(scene, k_ZenScene);
         Debug.Log($"[PuzzleSceneBuilder] Saved {k_ZenScene}");
@@ -882,34 +884,18 @@ public static class PuzzleSceneBuilder
     // Puzzle set builder — shared by both puzzle types
     // ════════════════════════════════════════════════════════════════════════
 
-    private static void BuildPuzzleSet(
-        string prefix,
+    private static List<GameObject> BuildPuzzlePieces(
         (string n, PrimitiveType p, Vector3 pos, Vector3 euler, Vector3 scale, Color col)[] defs,
-        Transform snapRoot,
-        PuzzleManager pm,
-        bool isSnowman)
+        Transform snapRoot)
     {
         var allPieces = new List<GameObject>();
-
         foreach (var d in defs)
         {
-            var (pieceGO, _) = MakePuzzlePiece($"{prefix}_{d.n}", d.p, d.pos, d.euler, d.scale, d.col, snapRoot);
-            pieceGO.SetActive(false);   // inactive until player selects this puzzle
+            var (pieceGO, _) = MakePuzzlePiece($"Robot_{d.n}", d.p, d.pos, d.euler, d.scale, d.col, snapRoot);
+            pieceGO.SetActive(false);   // inactive until the player selects a difficulty
             allPieces.Add(pieceGO);
         }
-
-        if (isSnowman)
-        {
-            pm.snowmanHardPieces   = new List<GameObject>(allPieces);          // all 7
-            pm.snowmanMediumPieces = allPieces.GetRange(0, 5);                 // first 5
-            pm.snowmanEasyPieces   = allPieces.GetRange(0, 3);                 // first 3
-        }
-        else
-        {
-            pm.robotHardPieces   = new List<GameObject>(allPieces);            // all 12
-            pm.robotMediumPieces = allPieces.GetRange(0, 8);                   // first 8
-            pm.robotEasyPieces   = allPieces.GetRange(0, 5);                   // first 5
-        }
+        return allPieces;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -932,8 +918,14 @@ public static class PuzzleSceneBuilder
         var rb = go.AddComponent<Rigidbody>();
         rb.mass          = 0.3f;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
+        // Continuous detection so fast moves (or ceiling drops) don't tunnel through thin walls.
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
 
-        go.AddComponent<XRGrabInteractable>();
+        var grab = go.AddComponent<XRGrabInteractable>();
+        // VelocityTracking moves the HELD piece via physics, so it collides with walls, the
+        // table and other loose pieces instead of ghosting through them (the default
+        // Instantaneous mode teleports the transform and ignores collisions while held).
+        grab.movementType = XRBaseInteractable.MovementType.VelocityTracking;
 
         var pp = go.AddComponent<PuzzlePiece>();
         pp.solveThreshold = 0.05f;
@@ -993,62 +985,111 @@ public static class PuzzleSceneBuilder
 
         Color panelBg = new Color(0.10f, 0.10f, 0.12f, 0.90f);
 
-        // ── Step 1: Puzzle Type panel ─────────────────────────────────────
-        var typePanel = MakePanel(root.transform, "PuzzleTypePanel", panelBg);
+        int easyN   = pm.easySettings.pieceCount;
+        int mediumN = pm.mediumSettings.pieceCount;
+        int hardN   = pm.hardSettings.pieceCount;
 
-        MakeUIText(typePanel.transform, "Title", "Choose Puzzle",
-                   new Vector2(0f, 160f), new Vector2(560f, 60f), 34, Color.white);
-
-        var snowmanBtn = MakeUIButton(typePanel.transform, "SnowmanBtn", "Snowman",
-                                      new Vector2(-140f, 40f), new Color(0.78f, 0.78f, 0.80f));
-        var robotBtn   = MakeUIButton(typePanel.transform, "RobotBtn",   "Robot",
-                                      new Vector2( 140f, 40f), new Color(0.55f, 0.68f, 0.82f));
-
-        MakeUIText(typePanel.transform, "SubLabel", "Simple (3–7 pieces)  |  Complex (5–12 pieces)",
-                   new Vector2(0f, -60f), new Vector2(560f, 40f), 18, new Color(0.7f, 0.7f, 0.7f));
-
-        // ── Step 2: Difficulty panel ──────────────────────────────────────
+        // ── Difficulty panel (single step) ────────────────────────────────
         var diffPanel = MakePanel(root.transform, "DifficultyPanel", panelBg);
-        diffPanel.SetActive(false);
 
         MakeUIText(diffPanel.transform, "Title", "Choose Difficulty",
-                   new Vector2(0f, 160f), new Vector2(560f, 60f), 34, Color.white);
+                   new Vector2(0f, 165f), new Vector2(560f, 60f), 34, Color.white);
 
         var easyBtn   = MakeUIButton(diffPanel.transform, "EasyBtn",   "Easy",
-                                      new Vector2(-190f, 50f), new Color(0.72f, 0.72f, 0.72f));
+                                      new Vector2(-190f, 70f), new Color(0.55f, 0.72f, 0.55f));
         var mediumBtn = MakeUIButton(diffPanel.transform, "MediumBtn", "Medium",
-                                      new Vector2(   0f, 50f), new Color(0.60f, 0.60f, 0.62f));
+                                      new Vector2(   0f, 70f), new Color(0.72f, 0.66f, 0.45f));
         var hardBtn   = MakeUIButton(diffPanel.transform, "HardBtn",   "Hard",
-                                      new Vector2( 190f, 50f), new Color(0.48f, 0.48f, 0.50f));
+                                      new Vector2( 190f, 70f), new Color(0.72f, 0.48f, 0.48f));
 
-        // Sub-labels describing what each baseline means
-        MakeUIText(diffPanel.transform, "EasyDesc",   "Full assist\nStrong magnet\nClear pieces",
-                   new Vector2(-190f, -20f), new Vector2(155f, 55f), 13, new Color(0.60f, 0.60f, 0.62f));
-        MakeUIText(diffPanel.transform, "MediumDesc", "Moderate assist\nLight magnet\nSubtle pieces",
-                   new Vector2(   0f, -20f), new Vector2(155f, 55f), 13, new Color(0.60f, 0.60f, 0.62f));
-        MakeUIText(diffPanel.transform, "HardDesc",   "Minimal assist\nNo magnet\nBlended pieces",
-                   new Vector2( 190f, -20f), new Vector2(155f, 55f), 13, new Color(0.60f, 0.60f, 0.62f));
+        // Piece-count line directly under each button (the only sub-text on the buttons)
+        MakeUIText(diffPanel.transform, "EasyCount",   $"{easyN} pieces",
+                   new Vector2(-190f, 22f), new Vector2(155f, 26f), 18, new Color(0.92f, 0.92f, 0.92f));
+        MakeUIText(diffPanel.transform, "MediumCount", $"{mediumN} pieces",
+                   new Vector2(   0f, 22f), new Vector2(155f, 26f), 18, new Color(0.92f, 0.92f, 0.92f));
+        MakeUIText(diffPanel.transform, "HardCount",   $"{hardN} pieces",
+                   new Vector2( 190f, 22f), new Vector2(155f, 26f), 18, new Color(0.92f, 0.92f, 0.92f));
+
+        // Round "i" info badge under each difficulty — opens info for THAT mode.
+        var easyInfo   = MakeInfoBadge(diffPanel.transform, "EasyInfoBadge",   new Vector2(-190f, -28f));
+        var mediumInfo = MakeInfoBadge(diffPanel.transform, "MediumInfoBadge", new Vector2(   0f, -28f));
+        var hardInfo   = MakeInfoBadge(diffPanel.transform, "HardInfoBadge",   new Vector2( 190f, -28f));
 
         MakeUIText(diffPanel.transform, "HintLabel",
-                   "Sets your baseline assistance. The system adapts automatically to your readings.",
-                   new Vector2(0f, -60f), new Vector2(560f, 40f), 17, new Color(0.65f, 0.65f, 0.65f));
+                   "Tap the \"i\" under a mode for details. Your choice sets the starting assistance — " +
+                   "the game then adapts in real time to your stress level from the Muse S headband.",
+                   new Vector2(0f, -110f), new Vector2(560f, 60f), 16, new Color(0.62f, 0.62f, 0.64f));
 
-        // ── Shared status label ────────────────────────────────────────────
+        // ── Per-mode info overlay panel (one panel; title/body swap per badge) ──
+        var infoPanel = MakePanel(root.transform, "InfoPanel", new Color(0.06f, 0.06f, 0.08f, 0.97f));
+        var infoTitle = MakeUIText(infoPanel.transform, "InfoTitle", "",
+                                   new Vector2(0f, 175f), new Vector2(560f, 55f), 30, Color.white);
+        var infoBody  = MakeUIText(infoPanel.transform, "InfoBody", "",
+                                   new Vector2(0f, -5f), new Vector2(520f, 300f), 20, new Color(0.86f, 0.86f, 0.88f));
+        var closeInfo = MakeUIButton(infoPanel.transform, "InfoCloseBtn", "Close",
+                                     new Vector2(0f, -195f), new Color(0.45f, 0.45f, 0.50f));
+        infoPanel.SetActive(false);
+
+        // ── Status label ───────────────────────────────────────────────────
         var statusLabel = MakeUIText(root.transform, "StatusLabel", "",
-                                     new Vector2(0f, -200f), new Vector2(580f, 44f), 20,
+                                     new Vector2(0f, -205f), new Vector2(580f, 44f), 20,
                                      new Color(0.85f, 0.85f, 0.85f));
 
         // ── Wire DifficultyUI component ────────────────────────────────────
         var diffUI = root.AddComponent<DifficultyUI>();
-        diffUI.puzzleTypePanel  = typePanel;
-        diffUI.difficultyPanel  = diffPanel;
-        diffUI.snowmanButton    = snowmanBtn;
-        diffUI.robotButton      = robotBtn;
-        diffUI.easyButton       = easyBtn;
-        diffUI.mediumButton     = mediumBtn;
-        diffUI.hardButton       = hardBtn;
-        diffUI.statusLabel      = statusLabel;
-        diffUI.puzzleManager    = pm;
+        diffUI.difficultyPanel   = diffPanel;
+        diffUI.easyButton        = easyBtn;
+        diffUI.mediumButton      = mediumBtn;
+        diffUI.hardButton        = hardBtn;
+        diffUI.easyInfoButton    = easyInfo;
+        diffUI.mediumInfoButton  = mediumInfo;
+        diffUI.hardInfoButton    = hardInfo;
+        diffUI.infoCloseButton   = closeInfo;
+        diffUI.infoPanel         = infoPanel;
+        diffUI.infoTitle         = infoTitle;
+        diffUI.infoBody          = infoBody;
+        diffUI.statusLabel       = statusLabel;
+        diffUI.puzzleManager     = pm;
+
+        // Per-mode info copy (piece counts baked in)
+        diffUI.easyInfoTitle   = $"EASY — {easyN} pieces";
+        diffUI.easyInfoBody    = "Bright, well-lit room.\n\nPieces start right next to their slots and a " +
+                                 "strong magnet pulls each one in — it even snaps home while you're still " +
+                                 "holding it. The gentlest mode.";
+        diffUI.mediumInfoTitle = $"MEDIUM — {mediumN} pieces";
+        diffUI.mediumInfoBody  = "The room goes dark — grab the floating lantern (it clips to your arm) to " +
+                                 "search.\n\nPieces are spread further from their slots and the magnet is " +
+                                 "lighter, so you place them more deliberately.\n\nIf you get stressed or " +
+                                 "stuck on a piece, it and its slot glow the same colour and the lantern " +
+                                 "cone widens to help you.";
+        diffUI.hardInfoTitle   = $"HARD — {hardN} pieces";
+        diffUI.hardInfoBody    = "Dark room filled with walls, columns and baskets.\n\nPieces rain down from " +
+                                 "the ceiling and settle among the obstacles. The magnet is weak — this is " +
+                                 "mostly hand placement.\n\nWhen you're stressed or stuck: a piece and its " +
+                                 "slot glow the same colour, the lantern cone widens, and a long-lost piece " +
+                                 "flickers so you can find it.";
+    }
+
+    /// Small round "i" badge button (uses the built-in circular Knob sprite).
+    private static Button MakeInfoBadge(Transform parent, string name, Vector2 anchoredPos)
+    {
+        var btn = MakeUIButton(parent, name, "i", anchoredPos, new Color(0.30f, 0.46f, 0.62f));
+        var rt  = btn.GetComponent<RectTransform>();
+        rt.sizeDelta = new Vector2(46f, 46f);
+
+        var img  = btn.GetComponent<Image>();
+        var knob = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/Knob.psd");
+        if (knob != null) { img.sprite = knob; img.type = Image.Type.Simple; }
+
+        // Shrink the label so the lowercase "i" sits centred in the circle.
+        var label = btn.GetComponentInChildren<TextMeshProUGUI>();
+        if (label != null)
+        {
+            label.GetComponent<RectTransform>().sizeDelta = new Vector2(40f, 40f);
+            label.fontSize  = 26;
+            label.fontStyle = FontStyles.Italic | FontStyles.Bold;
+        }
+        return btn;
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1164,7 +1205,13 @@ public static class PuzzleSceneBuilder
         go.GetComponent<Renderer>().material =
             GetOrCreateEmissiveMat("Lantern", new Color(1f, 0.82f, 0.40f), 2.5f);
 
-        go.AddComponent<Rigidbody>().mass = 0.3f;
+        // Hover in place until grabbed — with gravity it would fall to the floor and roll away
+        // in the pitch-dark room, making it impossible to find. Kinematic keeps it floating and
+        // reachable; ArmLantern parents it to the arm on grab anyway.
+        var lrb = go.AddComponent<Rigidbody>();
+        lrb.mass        = 0.3f;
+        lrb.useGravity  = false;
+        lrb.isKinematic = true;
         go.AddComponent<XRGrabInteractable>();
 
         // Glow that travels with the lantern: a real pool of light around the player's hand
@@ -1189,14 +1236,52 @@ public static class PuzzleSceneBuilder
         spot.color     = new Color(1f, 0.93f, 0.75f);
         spot.intensity = 9f;
         spot.range     = 14f;
-        spot.spotAngle = 70f;
+        spot.spotAngle = 55f;
         spot.shadows   = LightShadows.None;
         spot.enabled   = false;
 
         var lantern = go.AddComponent<ArmLantern>();
-        lantern.beam = spot;
+        lantern.beam          = spot;
+        lantern.baseSpotAngle = 55f;   // calm
+        lantern.maxSpotAngle  = 95f;   // very stressed → wider, easier search
         go.SetActive(false);
         return go;
+    }
+
+    /// Builds the hard-mode obstacle field: a few low walls, columns and open baskets that
+    /// the ceiling-dropped pieces scatter among. Parented under one root that starts inactive;
+    /// HardModeDarkroom shows it only on Hard. They sit away from the central table footprint.
+    private static GameObject BuildHardObstacles()
+    {
+        var root = new GameObject("HardObstacles");
+        var colMat = GetOrCreateMat("Obstacle_Zen", new Color(0.78f, 0.78f, 0.80f));
+
+        void Add(string n, PrimitiveType prim, Vector3 pos, Vector3 scale, Vector3 euler)
+        {
+            var go = GameObject.CreatePrimitive(prim);
+            go.name = n;
+            go.transform.SetParent(root.transform, true);
+            go.transform.position   = pos;
+            go.transform.localScale = scale;
+            go.transform.rotation   = Quaternion.Euler(euler);
+            go.GetComponent<Renderer>().material = colMat;
+        }
+
+        // Low walls (4)
+        Add("Wall_A", PrimitiveType.Cube, new Vector3(-1.7f, 0.45f,  0.6f), new Vector3(0.15f, 0.9f, 1.6f), Vector3.zero);
+        Add("Wall_B", PrimitiveType.Cube, new Vector3( 1.7f, 0.45f, -0.6f), new Vector3(0.15f, 0.9f, 1.6f), Vector3.zero);
+        Add("Wall_C", PrimitiveType.Cube, new Vector3( 0.6f, 0.35f,  1.9f), new Vector3(1.8f,  0.7f, 0.15f), Vector3.zero);
+        Add("Wall_D", PrimitiveType.Cube, new Vector3(-0.6f, 0.35f, -1.9f), new Vector3(1.8f,  0.7f, 0.15f), Vector3.zero);
+        // Columns (3)
+        Add("Column_A", PrimitiveType.Cylinder, new Vector3(-1.4f, 0.9f, -1.4f), new Vector3(0.18f, 0.9f, 0.18f), Vector3.zero);
+        Add("Column_B", PrimitiveType.Cylinder, new Vector3( 1.4f, 0.9f,  1.4f), new Vector3(0.18f, 0.9f, 0.18f), Vector3.zero);
+        Add("Column_C", PrimitiveType.Cylinder, new Vector3( 2.0f, 0.9f,  0.0f), new Vector3(0.18f, 0.9f, 0.18f), Vector3.zero);
+        // Baskets — short wide cylinders pieces can fall into (2)
+        Add("Basket_A", PrimitiveType.Cylinder, new Vector3(-2.0f, 0.20f, -0.2f), new Vector3(0.55f, 0.20f, 0.55f), Vector3.zero);
+        Add("Basket_B", PrimitiveType.Cylinder, new Vector3( 1.0f, 0.20f, -1.5f), new Vector3(0.55f, 0.20f, 0.55f), Vector3.zero);
+
+        root.SetActive(false);
+        return root;
     }
 
     /// Spawns the XR rig at <paramref name="pos"/> and yaws it so the player's default
@@ -1218,6 +1303,13 @@ public static class PuzzleSceneBuilder
         Vector3 flat = faceTarget - pos; flat.y = 0f;
         if (flat.sqrMagnitude > 0.0001f)
             rig.transform.rotation = Quaternion.LookRotation(flat.normalized, Vector3.up);
+
+        // FLOOR tracking origin — the base rig prefab ships as NotSpecified, which on Quest
+        // places the player INSIDE the floor (head at y≈0) and jams the CharacterController so
+        // they can't move. Floor maps the physical floor to y=0 and uses real headset height.
+        var origin = rig.GetComponent<Unity.XR.CoreUtils.XROrigin>();
+        if (origin != null)
+            origin.RequestedTrackingOriginMode = Unity.XR.CoreUtils.XROrigin.TrackingOriginMode.Floor;
 
         // Recenter the player's head to this spawn pose at runtime so a scene transition
         // (e.g. Tutorial → Game) can't leave them standing on the wrong side of the room.

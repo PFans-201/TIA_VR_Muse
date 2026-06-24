@@ -8,10 +8,12 @@ public enum DifficultyLevel
     Hard
 }
 
-public enum PuzzleType
+/// How the pieces are positioned when a puzzle starts.
+public enum SpawnMode
 {
-    Snowman,   // Simple: 3 / 5 / 7 pieces
-    Robot      // Complex: 5 / 8 / 12 pieces
+    NearSolved,       // Easy   — small offset from each piece's solved slot
+    OffsetFromSolved, // Medium — a larger offset, still relative to the solved slot
+    CeilingDrop       // Hard   — random x/z at ceiling height; pieces fall and settle
 }
 
 public enum ProgressionMode

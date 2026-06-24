@@ -125,9 +125,16 @@ public class AdaptiveDifficultyController : MonoBehaviour
 
     private void OnStressStateChanged(StressState state)
     {
+        bool wasActive = _sustainedStressActive;
         _sustainedStressActive = (state == StressState.Stressed);
         if (!_sustainedStressActive)
             _targetBlend = 0f;   // start ramping down immediately on recovery
+
+        if (_sustainedStressActive && !wasActive)
+            AdaptiveEventBus.Report("Easing puzzle — stronger magnet + clearer pieces", AdaptiveSignal.MuseStress);
+        else if (!_sustainedStressActive && wasActive)
+            AdaptiveEventBus.Report("Stress recovered — assistance fading back", AdaptiveSignal.MuseStress);
+
         Debug.Log($"[AdaptiveDifficultyController] Stress state → {state}  " +
                   $"blend target={_targetBlend:F2}");
     }

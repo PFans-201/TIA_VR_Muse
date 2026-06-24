@@ -30,21 +30,52 @@ public class XRSpawnRecenter : MonoBehaviour
     public int firstRecenterFrame = 2;
     public int lastRecenterFrame  = 8;
 
+    [Tooltip("Force the XR Origin to FLOOR tracking origin every frame until it takes. Fixes the " +
+             "Quest 'player sunk into the floor / can't move' bug caused by a NotSpecified origin: " +
+             "Floor maps the physical floor to y=0 so the headset reports real standing height.")]
+    public bool forceFloorTrackingOrigin = true;
+
     private XROrigin _origin;
     private int _frame;
     private bool _done;
+    private bool _floorApplied;
 
-    private void Awake() => _origin = GetComponent<XROrigin>();
+    private void Awake()
+    {
+        _origin = GetComponent<XROrigin>();
+        ApplyFloorOrigin();   // request as early as possible; re-asserted until it sticks
+    }
 
-    private void OnEnable() { _frame = 0; _done = false; }
+    private void OnEnable() { _frame = 0; _done = false; _floorApplied = false; }
 
     private void LateUpdate()
     {
+        // Keep requesting FLOOR until the subsystem is live and reports it — the request is a
+        // no-op once the device is already in Floor mode, so this self-stops.
+        ApplyFloorOrigin();
+
         if (_done) return;
         _frame++;
         if (_frame < firstRecenterFrame) return;   // let the HMD pose apply first
         Recenter();
         if (_frame >= lastRecenterFrame) _done = true;
+    }
+
+    /// Requests FLOOR tracking origin so the player stands on the floor (y=0) at real height
+    /// instead of being placed inside it. Safe to call repeatedly.
+    private void ApplyFloorOrigin()
+    {
+        if (!forceFloorTrackingOrigin || _floorApplied) return;
+        if (_origin == null) _origin = GetComponent<XROrigin>();
+        if (_origin == null) return;
+
+        if (_origin.CurrentTrackingOriginMode == UnityEngine.XR.TrackingOriginModeFlags.Floor)
+        {
+            _floorApplied = true;   // device confirmed Floor — stop re-requesting
+            return;
+        }
+        if (_origin.RequestedTrackingOriginMode != XROrigin.TrackingOriginMode.Floor)
+            _origin.RequestedTrackingOriginMode = XROrigin.TrackingOriginMode.Floor;
     }
 
     /// Public so a "Recenter" button / input action can call it too.

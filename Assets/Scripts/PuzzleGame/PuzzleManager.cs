@@ -1,15 +1,16 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-/// Central controller for both puzzle types and all three difficulty levels.
+/// Central controller for the (robot-only) puzzle across all three difficulty levels.
 ///
-/// Difficulty affects three independent axes:
-///   Magnetic force  — Easy: strong pull from far away / Hard: none
-///   Piece colour    — Easy: full colour  / Hard: bleeds into the zen grey background
-///   Ghost alpha     — Easy: clearly visible silhouettes / Hard: barely perceptible
-///   Scatter radius  — Easy: pieces stay near centre of table / Hard: scattered wide
+/// Difficulty differentiates several independent axes:
+///   Piece count     — Easy 5 / Medium 12 / Hard 22
+///   Magnetic pull   — Easy: strong, snaps even while held / Medium: moderate / Hard: weak
+///   Piece colour    — Easy: full colour / Hard: bleeds into the zen grey background
+///   Ghost alpha     — Easy: clear silhouettes / Hard: barely perceptible
+///   Start position  — Easy: near solved slot / Medium: offset / Hard: dropped from the ceiling
+///   Room / obstacles— Easy: lit, clear / Medium: dark / Hard: dark + obstacles
 public class PuzzleManager : MonoBehaviour
 {
     // ── Difficulty settings struct ────────────────────────────────────────────
@@ -17,12 +18,18 @@ public class PuzzleManager : MonoBehaviour
     [Serializable]
     public struct DifficultySettings
     {
-        [Tooltip("Force (Acceleration mode) pulling a held-but-near piece towards its zone")]
+        [Tooltip("Number of robot pieces used (taken from the start of the robotPieces list)")]
+        public int pieceCount;
+        [Tooltip("Pull strength toward the slot (higher = snappier)")]
         public float magnetForce;
         [Tooltip("Distance (m) from the snap zone that activates the magnetic pull")]
         public float magnetRange;
-        [Tooltip("Radius (m) used when scattering pieces from the puzzle anchor on start")]
-        public float scatterRadius;
+        [Tooltip("Easy: also pull/snap the piece into its slot while it is still held")]
+        public bool  magnetWhileHeld;
+        [Tooltip("How pieces are positioned when the puzzle starts")]
+        public SpawnMode spawnMode;
+        [Tooltip("Offset radius (m) from each piece's solved slot for NearSolved / OffsetFromSolved")]
+        public float startOffset;
         [Tooltip("1 = full piece colour  |  0 = same grey as the zen wall (invisible)")]
         [Range(0f, 1f)] public float pieceBrightness;
         [Tooltip("Ghost silhouette alpha when the piece is far from its zone")]
@@ -31,86 +38,78 @@ public class PuzzleManager : MonoBehaviour
         [Range(0f, 1f)] public float ghostActiveAlpha;
     }
 
-    // ── Snowman puzzle (Simple) ───────────────────────────────────────────────
+    // ── Robot puzzle pieces ───────────────────────────────────────────────────
 
-    [Header("Snowman Puzzle — Simple")]
-    [Tooltip("3 pieces: Body, Head, Hat")]
-    public List<GameObject> snowmanEasyPieces   = new();
-    [Tooltip("5 pieces: + LeftArm, RightArm")]
-    public List<GameObject> snowmanMediumPieces = new();
-    [Tooltip("7 pieces: + LeftLeg, RightLeg  (also used by HideAll)")]
-    public List<GameObject> snowmanHardPieces   = new();
-
-    // ── Robot puzzle (Complex) ────────────────────────────────────────────────
-
-    [Header("Robot Puzzle — Complex")]
-    [Tooltip("5 pieces: Head, Torso, LeftArm, RightArm, LeftLeg")]
-    public List<GameObject> robotEasyPieces     = new();
-    [Tooltip("8 pieces: + RightLeg, LeftForearm, RightForearm")]
-    public List<GameObject> robotMediumPieces   = new();
-    [Tooltip("12 pieces: + LeftFoot, RightFoot, LeftEye, RightEye  (also used by HideAll)")]
-    public List<GameObject> robotHardPieces     = new();
+    [Header("Robot Puzzle")]
+    [Tooltip("All robot pieces, ordered. Each difficulty uses the first N (its pieceCount).")]
+    public List<GameObject> robotPieces = new();
 
     // ── Difficulty settings ───────────────────────────────────────────────────
 
     [Header("Difficulty Settings")]
     public DifficultySettings easySettings = new DifficultySettings
     {
-        magnetForce = 12f, magnetRange = 0.35f, scatterRadius = 0.35f,
-        pieceBrightness = 1.00f, ghostIdleAlpha = 0.45f, ghostActiveAlpha = 0.70f
+        pieceCount = 5,  magnetForce = 12f, magnetRange = 0.22f, magnetWhileHeld = true,
+        spawnMode = SpawnMode.NearSolved, startOffset = 0.10f,
+        pieceBrightness = 1.00f, ghostIdleAlpha = 0.50f, ghostActiveAlpha = 0.75f
     };
     public DifficultySettings mediumSettings = new DifficultySettings
     {
-        magnetForce = 4f, magnetRange = 0.12f, scatterRadius = 0.65f,
-        pieceBrightness = 0.60f, ghostIdleAlpha = 0.20f, ghostActiveAlpha = 0.40f
+        pieceCount = 12, magnetForce = 5f,  magnetRange = 0.13f, magnetWhileHeld = false,
+        spawnMode = SpawnMode.OffsetFromSolved, startOffset = 0.40f,
+        pieceBrightness = 0.65f, ghostIdleAlpha = 0.22f, ghostActiveAlpha = 0.42f
     };
     public DifficultySettings hardSettings = new DifficultySettings
     {
-        magnetForce = 0f, magnetRange = 0.00f, scatterRadius = 1.10f,
-        pieceBrightness = 0.25f, ghostIdleAlpha = 0.04f, ghostActiveAlpha = 0.12f
+        pieceCount = 22, magnetForce = 2f,  magnetRange = 0.08f, magnetWhileHeld = false,
+        spawnMode = SpawnMode.CeilingDrop, startOffset = 0f,
+        pieceBrightness = 0.30f, ghostIdleAlpha = 0.05f, ghostActiveAlpha = 0.14f
     };
 
     // ── References ────────────────────────────────────────────────────────────
 
     [Header("References")]
-    [Tooltip("Pieces are scattered around this point when a puzzle starts")]
+    [Tooltip("Pieces are dropped/scattered around this point on a CeilingDrop start")]
     public Transform       puzzleAnchor;
-    [Tooltip("Optional — wired by the scene builder; manages MUSE S hint colours")]
+    [Tooltip("Horizontal radius (m) used to scatter ceiling-dropped pieces")]
+    public float           ceilingDropRadius = 1.6f;
+    [Tooltip("Height (m) pieces drop from on Hard")]
+    public float           ceilingDropHeight = 2.6f;
+    [Tooltip("Optional — wired by the scene builder; manages MUSE S / behaviour hint colours")]
     public PieceHintSystem hintSystem;
 
     // ── Runtime state ─────────────────────────────────────────────────────────
 
     [Header("Runtime State (read-only)")]
     [SerializeField] private DifficultyLevel _currentDifficulty;
-    [SerializeField] private PuzzleType      _currentPuzzleType;
 
     private List<GameObject>  _activePieces    = new();
     private int               _solvedCount;
     private DifficultySettings _baselineSettings;   // the settings chosen at StartPuzzle
     private bool              _puzzleStarted;
 
-    /// Fired when the player completes a puzzle — DifficultyUI listens to unlock the next level.
-    public event Action<PuzzleType, DifficultyLevel> OnPuzzleCompleted;
+    /// True while a dark-room difficulty (Medium / Hard) is active — read by PieceHintSystem.
+    public bool IsDarkRoom => _puzzleStarted && _currentDifficulty != DifficultyLevel.Easy;
 
-    /// Fired when a puzzle is started (type + chosen difficulty) — HardModeDarkroom
-    /// listens to toggle the dark/lantern mode on Hard.
-    public event Action<PuzzleType, DifficultyLevel> OnPuzzleStarted;
+    /// Fired when the player completes a puzzle — DifficultyUI listens to re-open the menu.
+    public event Action<DifficultyLevel> OnPuzzleCompleted;
+
+    /// Fired when a puzzle is started — HardModeDarkroom listens to toggle dark/lantern/obstacles.
+    public event Action<DifficultyLevel> OnPuzzleStarted;
 
     // ── Unity lifecycle ───────────────────────────────────────────────────────
 
     private void Awake()
     {
         // Hide every piece and snap zone immediately — before the first frame renders.
-        // This fixes the issue where pieces were visible before difficulty selection.
-        SetGroupActive(snowmanHardPieces, false);
-        SetGroupActive(robotHardPieces,   false);
+        SetGroupActive(robotPieces, false);
         HideAllSnapZones();
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    /// Called by DifficultyUI when the player confirms puzzle type and difficulty.
-    public void StartPuzzle(PuzzleType puzzleType, DifficultyLevel level)
+    /// Called by DifficultyUI when the player confirms a difficulty.
+    public void StartPuzzle(DifficultyLevel level)
     {
         // Unsubscribe previous listeners before overwriting _activePieces
         foreach (var obj in _activePieces)
@@ -119,33 +118,23 @@ public class PuzzleManager : MonoBehaviour
             if (pp != null) pp.OnPieceSolved -= HandlePieceSolved;
         }
 
-        _currentPuzzleType = puzzleType;
         _currentDifficulty = level;
         _solvedCount       = 0;
         _puzzleStarted     = false;   // reset until baseline is stored below
 
-        // Deactivate every piece and snap zone across both puzzles
-        SetGroupActive(snowmanHardPieces, false);
-        SetGroupActive(robotHardPieces,   false);
+        SetGroupActive(robotPieces, false);
         HideAllSnapZones();
-
-        // Pick the correct subset
-        _activePieces = (puzzleType, level) switch
-        {
-            (PuzzleType.Snowman, DifficultyLevel.Easy)   => snowmanEasyPieces,
-            (PuzzleType.Snowman, DifficultyLevel.Medium) => snowmanMediumPieces,
-            (PuzzleType.Snowman, _)                      => snowmanHardPieces,
-            (PuzzleType.Robot,   DifficultyLevel.Easy)   => robotEasyPieces,
-            (PuzzleType.Robot,   DifficultyLevel.Medium) => robotMediumPieces,
-            _                                            => robotHardPieces,
-        };
 
         DifficultySettings s = level switch
         {
             DifficultyLevel.Easy   => easySettings,
             DifficultyLevel.Medium => mediumSettings,
-            _                     => hardSettings,
+            _                      => hardSettings,
         };
+
+        int count = Mathf.Clamp(s.pieceCount, 0, robotPieces.Count);
+        _activePieces = robotPieces.GetRange(0, count);
+
         _baselineSettings = s;
         _puzzleStarted    = true;
 
@@ -156,20 +145,16 @@ public class PuzzleManager : MonoBehaviour
             if (pieceObj == null) continue;
             pieceObj.SetActive(true);
 
-            // Scatter pieces on the table surface around the anchor
-            if (puzzleAnchor != null)
-            {
-                Vector2 rnd = UnityEngine.Random.insideUnitCircle * s.scatterRadius;
-                pieceObj.transform.position = puzzleAnchor.position +
-                                              new Vector3(rnd.x, 0.20f, rnd.y);
-            }
-
             var piece = pieceObj.GetComponent<PuzzlePiece>();
             if (piece == null) continue;
+
+            // Position the piece for this difficulty (relative to its own solved slot)
+            PositionPiece(pieceObj, piece, s);
 
             piece.isMagneticEnabled = s.magnetForce > 0f;
             piece.magnetForce       = s.magnetForce;
             piece.magnetRange       = s.magnetRange;
+            piece.magnetWhileHeld   = s.magnetWhileHeld;
             piece.OnPieceSolved    += HandlePieceSolved;
             piece.SetVisibility(s.pieceBrightness);
 
@@ -182,7 +167,6 @@ public class PuzzleManager : MonoBehaviour
                 var zone = snapGO.GetComponent<MagneticSnapZone>();
                 if (zone != null)
                 {
-                    // Snap zone activation range mirrors magnetic range (minimum 0.10 m)
                     zone.activationRange = Mathf.Max(s.magnetRange, 0.10f);
                     zone.SetGhostAlpha(s.ghostIdleAlpha, s.ghostActiveAlpha);
                     hintPairs.Add(new PieceHintSystem.PiecePair { piece = piece, snapZone = zone });
@@ -192,19 +176,46 @@ public class PuzzleManager : MonoBehaviour
 
         hintSystem?.RegisterPairs(hintPairs);
 
-        OnPuzzleStarted?.Invoke(puzzleType, level);
+        OnPuzzleStarted?.Invoke(level);
 
-        Debug.Log($"[PuzzleManager] {puzzleType} · {level} — " +
-                  $"{_activePieces.Count} pieces  " +
-                  $"magnet={s.magnetForce:F1} N  " +
-                  $"brightness={s.pieceBrightness * 100:F0}%");
+        Debug.Log($"[PuzzleManager] Robot · {level} — {_activePieces.Count} pieces  " +
+                  $"magnet={s.magnetForce:F1}  spawn={s.spawnMode}  brightness={s.pieceBrightness * 100:F0}%");
+    }
+
+    /// Positions a freshly-activated piece based on the difficulty spawn mode.
+    private void PositionPiece(GameObject pieceObj, PuzzlePiece piece, DifficultySettings s)
+    {
+        var rb = pieceObj.GetComponent<Rigidbody>();
+        if (rb != null) { rb.isKinematic = false; rb.linearVelocity = Vector3.zero; rb.angularVelocity = Vector3.zero; }
+
+        Vector3 solved = piece.correctPlacementTarget != null
+            ? piece.correctPlacementTarget.position
+            : (puzzleAnchor != null ? puzzleAnchor.position : pieceObj.transform.position);
+
+        switch (s.spawnMode)
+        {
+            case SpawnMode.CeilingDrop:
+                Vector3 baseP = puzzleAnchor != null ? puzzleAnchor.position : solved;
+                Vector2 disc  = UnityEngine.Random.insideUnitCircle * ceilingDropRadius;
+                pieceObj.transform.position = new Vector3(baseP.x + disc.x, ceilingDropHeight, baseP.z + disc.y);
+                pieceObj.transform.rotation = UnityEngine.Random.rotation;
+                break;
+
+            case SpawnMode.NearSolved:
+            case SpawnMode.OffsetFromSolved:
+            default:
+                Vector3 rnd = UnityEngine.Random.insideUnitSphere * s.startOffset;
+                rnd.y = Mathf.Abs(rnd.y) * 0.5f;   // bias upward so pieces don't spawn under the table
+                pieceObj.transform.position = solved + rnd;
+                break;
+        }
     }
 
     // ── Adaptive assistance (called by AdaptiveDifficultyController) ─────────
 
-    /// Interpolates all active piece and snap-zone settings between the player's
-    /// chosen baseline (blend=0) and maximum Easy-mode assistance (blend=1).
-    /// Called every frame by AdaptiveDifficultyController while stress is elevated.
+    /// Interpolates active piece and snap-zone settings between the player's chosen baseline
+    /// (blend=0) and maximum Easy-mode assistance (blend=1). Called every frame while stress
+    /// is elevated.
     public void OverrideAssistance(float blend)
     {
         if (!_puzzleStarted) return;
@@ -213,7 +224,6 @@ public class PuzzleManager : MonoBehaviour
         {
             magnetForce      = Mathf.Lerp(_baselineSettings.magnetForce,      easySettings.magnetForce,      blend),
             magnetRange      = Mathf.Lerp(_baselineSettings.magnetRange,      easySettings.magnetRange,      blend),
-            scatterRadius    = _baselineSettings.scatterRadius,   // scatter only set at start, not live
             pieceBrightness  = Mathf.Lerp(_baselineSettings.pieceBrightness,  easySettings.pieceBrightness,  blend),
             ghostIdleAlpha   = Mathf.Lerp(_baselineSettings.ghostIdleAlpha,   easySettings.ghostIdleAlpha,   blend),
             ghostActiveAlpha = Mathf.Lerp(_baselineSettings.ghostActiveAlpha, easySettings.ghostActiveAlpha, blend),
@@ -254,11 +264,10 @@ public class PuzzleManager : MonoBehaviour
 
     private void OnPuzzleComplete()
     {
-        Debug.Log($"[PuzzleManager] Puzzle complete! ({_currentPuzzleType} · {_currentDifficulty})");
+        Debug.Log($"[PuzzleManager] Puzzle complete! (Robot · {_currentDifficulty})");
         // TODO: Trigger celebration FX — confetti particle system, completion sound,
-        //       "Well done!" UI panel. The Confetti prefab in VRTemplateAssets/Prefabs
-        //       can be instantiated here.
-        OnPuzzleCompleted?.Invoke(_currentPuzzleType, _currentDifficulty);
+        //       "Well done!" UI panel.
+        OnPuzzleCompleted?.Invoke(_currentDifficulty);
     }
 
     private void SetGroupActive(List<GameObject> group, bool active)
@@ -269,19 +278,12 @@ public class PuzzleManager : MonoBehaviour
 
     private void HideAllSnapZones()
     {
-        foreach (var pieceObj in AllPieceObjects())
+        foreach (var pieceObj in robotPieces)
         {
             if (pieceObj == null) continue;
             var piece = pieceObj.GetComponent<PuzzlePiece>();
             if (piece?.correctPlacementTarget != null)
                 piece.correctPlacementTarget.gameObject.SetActive(false);
         }
-    }
-
-    // Iterates ALL pieces across both puzzle types (hard lists include every piece)
-    private IEnumerable<GameObject> AllPieceObjects()
-    {
-        foreach (var p in snowmanHardPieces) yield return p;
-        foreach (var p in robotHardPieces)   yield return p;
     }
 }

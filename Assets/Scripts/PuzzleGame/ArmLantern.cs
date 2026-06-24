@@ -22,10 +22,17 @@ public class ArmLantern : MonoBehaviour
     [Tooltip("The lantern's beam (spotlight). Stays OFF until grabbed, then lights the arm direction.")]
     public Light beam;
 
+    [Header("Stress-reactive cone")]
+    [Tooltip("Spot angle (deg) when the player is calm.")]
+    public float baseSpotAngle = 55f;
+    [Tooltip("Spot angle (deg) when the player is very stressed — a wider, easier-to-search cone.")]
+    public float maxSpotAngle = 95f;
+
     private XRGrabInteractable _grab;
     private Rigidbody _rb;
     private bool _attached;
     private Transform _pendingHand;
+    private bool _coneWideReported;
 
     private void Awake()
     {
@@ -52,6 +59,25 @@ public class ArmLantern : MonoBehaviour
         {
             AttachToArm(_pendingHand);
             _pendingHand = null;
+        }
+
+        // While lit, widen the cone with the player's stress so a very stressed player gets a
+        // bigger pool of light to search by.
+        if (beam != null && beam.enabled && CognitiveLoadAdapter.Instance != null)
+        {
+            float stress = CognitiveLoadAdapter.Instance.StressLevel;
+            beam.spotAngle = Mathf.Lerp(baseSpotAngle, maxSpotAngle, stress);
+
+            // Report the cone-widening action once per high-stress episode (hysteresis).
+            if (!_coneWideReported && stress >= 0.70f)
+            {
+                AdaptiveEventBus.Report("Lantern cone widened to help you search", AdaptiveSignal.MuseStress);
+                _coneWideReported = true;
+            }
+            else if (_coneWideReported && stress <= 0.50f)
+            {
+                _coneWideReported = false;
+            }
         }
     }
 
