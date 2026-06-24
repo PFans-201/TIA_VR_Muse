@@ -43,7 +43,9 @@ public class XRSpawnRecenter : MonoBehaviour
     private void Awake()
     {
         _origin = GetComponent<XROrigin>();
-        ApplyFloorOrigin();   // request as early as possible; re-asserted until it sticks
+        // Fallback standing height if the runtime ever falls back to Device mode (Floor ignores it).
+        if (_origin != null) _origin.CameraYOffset = 1.6f;
+        ApplyFloorOrigin();   // request FLOOR as early as possible; re-asserted until it sticks
     }
 
     private void OnEnable() { _frame = 0; _done = false; _floorApplied = false; }
