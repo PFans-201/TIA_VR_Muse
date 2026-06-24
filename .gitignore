@@ -88,3 +88,11 @@ Thumbs.db
 # "!/Assets/**/*.meta" rule above so its .meta is re-ignored too)
 [Aa]ssets/XR/Temp/
 [Aa]ssets/XR/Temp.meta
+
+# Unity Performance Testing auto-generated run artifacts (under Assets — placed AFTER the
+# "!/Assets/**/*.meta" rule above so their .meta files are re-ignored too)
+[Aa]ssets/[Rr]esources/PerformanceTestRun*.json
+[Aa]ssets/[Rr]esources/PerformanceTestRun*.json.meta
+
+# Python bytecode cache
+__pycache__/
