@@ -52,6 +52,10 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
     public string Phase       => _phase;
     public bool   Receiving   => _secondsSinceLastPacket < 5f;
     public string Status      => _status;
+    
+    public float ThetaZ { get; private set; }
+    public float AlphaZ { get; private set; }
+    public float Cli { get; private set; }
 
     private UdpClient _udp;
     private UdpClient _ctrlSender;
@@ -136,6 +140,13 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
             try
             {
                 byte[] bytes = _udp.Receive(ref remote);
+                
+                // Auto-detect the Mac's IP address so control commands can reach it
+                if (remote.Address != null)
+                {
+                    bridgeHost = remote.Address.ToString();
+                }
+
                 // The bridge may pack one JSON object per line; handle either.
                 foreach (var line in Encoding.UTF8.GetString(bytes)
                              .Split('\n'))
@@ -160,6 +171,10 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
             _stress  = Mathf.Clamp01(r.stress);
             _phase   = string.IsNullOrEmpty(r.phase) ? _phase : r.phase;
             _contact = r.contact;
+            
+            ThetaZ = r.theta_z;
+            AlphaZ = r.alpha_z;
+            Cli = r.cli;
         }
 
         if (got)
