@@ -195,15 +195,26 @@ def indices_from_z(z, sensitivity):
 
 
 class IndexSmoother:
-    """Independent EMA smoothing for the three 0..1 indices (each starts neutral at 0.5)."""
+    """Peak-biased smoothing for the three 0..1 indices (each starts neutral at 0.5).
+
+    The cognitive signals are mostly TRANSIENT — short bursts of stress / cognitive load rather
+    than sustained plateaus. A symmetric EMA buried those peaks (it averaged each spike back down
+    toward the mean), so in-game reactivity felt flat. Instead this uses an asymmetric envelope
+    follower: a FAST attack so the index jumps up to a peak almost immediately, and a SLOW release
+    so it eases back down — emphasising peaks while still filtering jitter. Set attack==release for
+    the old symmetric behaviour."""
     KEYS = ("stress", "attention", "cognitive_load")
 
-    def __init__(self):
+    def __init__(self, attack=0.6, release=0.12):
         self.v = {k: 0.5 for k in self.KEYS}
+        self.attack = attack
+        self.release = release
 
     def update(self, raw):
         for k in self.KEYS:
-            s = SMOOTH_ALPHA * raw[k] + (1 - SMOOTH_ALPHA) * self.v[k]
+            target = raw[k]
+            a = self.attack if target > self.v[k] else self.release
+            s = a * target + (1 - a) * self.v[k]
             self.v[k] = max(0.0, min(1.0, s))
         return dict(self.v)
 
@@ -401,7 +412,7 @@ def run_session(args, send, recorder=None):
               "Start your task. Ctrl+C to stop.\n" + "=" * 60)
         print(f"{'Elapsed':>8} {'Stress':>8} {'Atten':>8} {'CogLoad':>8}  ch")
         print("-" * 56)
-        smoother = IndexSmoother()
+        smoother = IndexSmoother(attack=args.attack, release=args.release)
         t0 = time.time()
         while args.duration == 0 or time.time() - t0 < args.duration:
             time.sleep(args.update)
@@ -587,6 +598,12 @@ def main():
     ap.add_argument("--update", type=float, default=1.0,
                     help="Seconds between updates / lower = lower latency (default 1).")
     ap.add_argument("--sensitivity", type=float, default=1.5)
+    ap.add_argument("--attack", type=float, default=0.6,
+                    help="Peak-follower rise rate (0..1). Higher = the index jumps to a peak faster "
+                         "(more reactive to bursts of stress). Default 0.6.")
+    ap.add_argument("--release", type=float, default=0.12,
+                    help="Peak-follower fall rate (0..1). Lower = peaks linger / decay slower. "
+                         "Default 0.12. Set --release equal to --attack for plain EMA smoothing.")
     ap.add_argument("--duration", type=float, default=0.0,
                     help="Active monitoring seconds (0 = run until Ctrl+C)")
     ap.add_argument("--udp-host", default="127.0.0.1")

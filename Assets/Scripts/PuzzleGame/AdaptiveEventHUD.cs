@@ -17,16 +17,16 @@ public class AdaptiveEventHUD : MonoBehaviour
     [Tooltip("Where to place the toast relative to the headset camera. Default = low and centred.")]
     public Vector3 hudPosition = new Vector3(0f, -0.30f, 0.75f);
     [Tooltip("World-scale per canvas pixel.")]
-    public float hudScale = 0.0009f;
+    public float hudScale = 0.0011f;
 
     [Header("Behaviour")]
     [Tooltip("How long (seconds) each event stays before it fully fades out.")]
-    public float holdSeconds = 7.5f;
+    public float holdSeconds = 14f;
     [Tooltip("Maximum number of events shown at once (newest at the bottom).")]
     public int maxLines = 3;
 
-    private const int PanelW = 460;
-    private const int PanelH = 160;   // taller so the larger 3-line text isn't clipped
+    private const int PanelW = 560;
+    private const int PanelH = 220;   // taller so the larger 3-line text isn't clipped
     private const string HexMuse = "#5AA8FF";   // Muse stress
     private const string HexGame = "#FFA838";   // behaviour
 
@@ -120,7 +120,7 @@ public class AdaptiveEventHUD : MonoBehaviour
         _body = AddTMP(bodyRT, "BodyText");
         Stretch(_body.GetComponent<RectTransform>());
         _body.text      = "";
-        _body.fontSize  = 17f;                            // larger so the hint reads at a glance
+        _body.fontSize  = 25f;                            // larger so the hint reads even when blurry
         _body.color     = Color.white;
         _body.alignment = TextAlignmentOptions.Bottom;   // grow upward from the bottom
         _body.textWrappingMode = TextWrappingModes.Normal;

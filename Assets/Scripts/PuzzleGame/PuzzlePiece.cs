@@ -244,23 +244,24 @@ public class PuzzlePiece : MonoBehaviour
         // can nest the remaining pieces flush against the assembly instead of being blocked.
         foreach (var col in GetComponentsInChildren<Collider>()) col.enabled = false;
 
-        // Placed pieces go grey and STAY VISIBLE (coloured = still to place). Apply to EVERY
-        // renderer because a prefab piece can be several child meshes — tinting only the first
-        // left the rest coloured and could make the piece look like it "vanished" into the build.
+        // Placed pieces must STAY CLEARLY VISIBLE. A flat grey swap made them vanish into the grey
+        // room / assembled robot ("the easy pieces disappear once placed"), so instead each renderer
+        // keeps a DIMMED version of its own colour plus a faint self-emission — the piece still reads
+        // as "settled/placed" but can never look like it disappeared, even in a dark room. Apply to
+        // EVERY renderer because a prefab piece can be several child meshes.
         foreach (var r in GetComponentsInChildren<Renderer>())
         {
             if (r == null) continue;
             r.enabled = true;                       // never let a correctly-placed piece disappear
-            if (solvedMaterial != null)
-            {
-                r.material = solvedMaterial;
-            }
-            else
-            {
-                var m = r.material;
-                m.SetColor("_EmissionColor", Color.black);
-                m.color = k_PlacedGrey;
-            }
+            var m = r.material;                     // per-renderer instance
+            Color src = m.HasProperty("_BaseColor") ? m.GetColor("_BaseColor") : m.color;
+            // Guard against an already-grey/near-black source so it is always visibly tinted.
+            if (src.maxColorComponent < 0.25f) src = k_PlacedGrey;
+            Color dim = src * 0.7f; dim.a = 1f;
+            m.color = dim;
+            if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", dim);
+            m.EnableKeyword("_EMISSION");
+            m.SetColor("_EmissionColor", src * 0.22f);   // gentle glow so it never reads as gone
         }
 
         Debug.Log($"[PuzzlePiece] '{name}' solved!");

@@ -86,6 +86,13 @@ public class PlayerSpawnGuard : MonoBehaviour
         if (recenterOnSceneLoad) StartCoroutine(RecenterAfterLoad());
     }
 
+    /// Re-run the one-shot recenter on demand (e.g. the "Restart Puzzle" button) so the player is
+    /// slid back to the authored spawn XZ and faced toward the room content again, without a reload.
+    public void RecenterNow()
+    {
+        if (isActiveAndEnabled) StartCoroutine(RecenterAfterLoad());
+    }
+
     private IEnumerator RecenterAfterLoad()
     {
         // Let XR tracking settle so the camera reports a real pose before we translate.

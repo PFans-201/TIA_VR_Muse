@@ -27,8 +27,8 @@ public class MuseStatusHUD : MonoBehaviour
     [Tooltip("Where the head-locked window sits relative to the headset (X+ right, Y- down, Z+ forward).")]
     public Vector3 spawnOffset = new Vector3(0.30f, -0.20f, 0.65f);
 
-    [Tooltip("World-scale per canvas pixel. 0.0008 ≈ 37 cm wide panel at 65 cm depth.")]
-    public float hudScale = 0.0008f;
+    [Tooltip("World-scale per canvas pixel. Larger so the small labels stay readable even slightly blurry.")]
+    public float hudScale = 0.00100f;
 
     [Header("Graph")]
     [Tooltip("How often to add a new sample to the graph (seconds).")]
@@ -361,7 +361,7 @@ public class MuseStatusHUD : MonoBehaviour
         var titleTxt = AddTMP(titleBar, "TitleText");
         Stretch(titleTxt.GetComponent<RectTransform>());
         titleTxt.text      = "  🧠  MUSE";
-        titleTxt.fontSize  = 10.5f;
+        titleTxt.fontSize  = 13f;
         titleTxt.fontStyle = FontStyles.Bold;
         titleTxt.color     = new Color(0.75f, 0.85f, 1.00f, 1f);
         titleTxt.alignment = TextAlignmentOptions.Left;
@@ -383,7 +383,7 @@ public class MuseStatusHUD : MonoBehaviour
         _statusLabel = AddTMP(statusRT, "StatusText");
         Stretch(_statusLabel.GetComponent<RectTransform>());
         _statusLabel.text     = $"<color={HexScan}>●</color>  Initializing...";
-        _statusLabel.fontSize = 10f;
+        _statusLabel.fontSize = 13f;
         _statusLabel.color    = Color.white;
         _statusLabel.textWrappingMode = TextWrappingModes.NoWrap;
         _statusLabel.overflowMode     = TextOverflowModes.Ellipsis;
@@ -403,7 +403,7 @@ public class MuseStatusHUD : MonoBehaviour
         _valuesLabel = AddTMP(valRT, "ValuesText");
         Stretch(_valuesLabel.GetComponent<RectTransform>());
         _valuesLabel.text      = "waiting for data...";
-        _valuesLabel.fontSize  = 8.5f;
+        _valuesLabel.fontSize  = 11f;
         _valuesLabel.color     = new Color(0.85f, 0.85f, 0.85f, 1f);
         _valuesLabel.textWrappingMode = TextWrappingModes.NoWrap;
         _valuesLabel.alignment        = TextAlignmentOptions.Left;
@@ -415,7 +415,7 @@ public class MuseStatusHUD : MonoBehaviour
         _legendLabel.text =
             $"<color={HexOK}>■</color> Stress    <color=#FF9426>■</color> Cognitive load    " +
             "<color=#489EFF>■</color> Attention    grid = 30 s  (0–1)";
-        _legendLabel.fontSize  = 8f;
+        _legendLabel.fontSize  = 10.5f;
         _legendLabel.color     = new Color(0.65f, 0.68f, 0.75f, 1f);
         _legendLabel.alignment = TextAlignmentOptions.Center;
         _legendLabel.textWrappingMode = TextWrappingModes.NoWrap;
@@ -435,14 +435,14 @@ public class MuseStatusHUD : MonoBehaviour
         var title = AddTMP(rt, "InfoTitle");
         Pin(title.GetComponent<RectTransform>(), 12, PanelH - 30, PanelW - 24, 22);
         title.text      = "How each metric is computed";
-        title.fontSize  = 12f;
+        title.fontSize  = 14f;
         title.fontStyle = FontStyles.Bold;
         title.color     = new Color(0.80f, 0.88f, 1f, 1f);
         title.alignment = TextAlignmentOptions.Left;
 
         var body = AddTMP(rt, "InfoBody");
         Pin(body.GetComponent<RectTransform>(), 14, 30, PanelW - 28, PanelH - 64);
-        body.fontSize  = 8.6f;
+        body.fontSize  = 10.8f;
         body.color     = new Color(0.86f, 0.88f, 0.92f, 1f);
         body.alignment = TextAlignmentOptions.TopLeft;
         body.textWrappingMode = TextWrappingModes.Normal;

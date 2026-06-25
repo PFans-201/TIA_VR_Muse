@@ -1234,6 +1234,9 @@ public static class PuzzleSceneBuilder
         // Head-locked session menu: Restart Puzzle + New Session (recalibrate from the intro).
         new GameObject("SessionMenu").AddComponent<SessionMenu>();
 
+        // Win banner: "✓ Puzzle solved!" + the time it took, shown on completion.
+        new GameObject("PuzzleWinHUD").AddComponent<PuzzleWinHUD>();
+
         EditorSceneManager.SaveScene(scene, k_ZenScene);
         Debug.Log($"[PuzzleSceneBuilder] Saved {k_ZenScene}");
     }
@@ -1535,6 +1538,13 @@ public static class PuzzleSceneBuilder
         {
             Bounds b = huskRends[0].bounds;
             for (int i = 1; i < huskRends.Length; i++) b.Encapsulate(huskRends[i].bounds);
+
+            // The authored robot faces AWAY from the player's spawn — rotate the whole assembly 180°
+            // about the vertical axis through its centre so it faces forward. Rotating before the
+            // lift is read keeps every piece + snap zone consistent (a yaw leaves Y extents unchanged,
+            // so the lift below is still correct).
+            husk.transform.RotateAround(b.center, Vector3.up, 180f);
+
             float lift = (k_TableTopY + k_Clearance) - b.min.y;
             if (lift > 0f) husk.transform.position += Vector3.up * lift;
         }

@@ -31,8 +31,9 @@ public class HardModeDarkroom : MonoBehaviour
     {
         if (puzzleManager != null)
         {
-            puzzleManager.OnPuzzleStarted += HandlePuzzleStarted;
-            puzzleManager.OnPuzzleReset   += HandlePuzzleReset;
+            puzzleManager.OnPuzzleStarted   += HandlePuzzleStarted;
+            puzzleManager.OnPuzzleReset     += HandlePuzzleReset;
+            puzzleManager.OnPuzzleCompleted += HandlePuzzleCompleted;
         }
         SetDark(false);   // start lit until a puzzle is chosen
         if (obstacleRoot != null) obstacleRoot.SetActive(false);
@@ -42,8 +43,9 @@ public class HardModeDarkroom : MonoBehaviour
     {
         if (puzzleManager != null)
         {
-            puzzleManager.OnPuzzleStarted -= HandlePuzzleStarted;
-            puzzleManager.OnPuzzleReset   -= HandlePuzzleReset;
+            puzzleManager.OnPuzzleStarted   -= HandlePuzzleStarted;
+            puzzleManager.OnPuzzleReset     -= HandlePuzzleReset;
+            puzzleManager.OnPuzzleCompleted -= HandlePuzzleCompleted;
         }
     }
 
@@ -53,6 +55,10 @@ public class HardModeDarkroom : MonoBehaviour
         SetDark(false);
         if (obstacleRoot != null) obstacleRoot.SetActive(false);
     }
+
+    // Finishing a puzzle must ALSO restore the light + clear obstacles (a dark/hard run used to
+    // leave the room pitch black with the solved robot still sitting there when the menu reopened).
+    private void HandlePuzzleCompleted(DifficultyLevel _) => HandlePuzzleReset();
 
     private void HandlePuzzleStarted(DifficultyLevel level)
     {

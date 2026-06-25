@@ -245,6 +245,12 @@ public class PuzzleManager : MonoBehaviour
 
         HideEverything();
         OnPuzzleReset?.Invoke();
+
+        // Put the player back in front of the difficulty panel (the restart used to leave them
+        // wherever they had wandered, facing away from the menu).
+        var guard = FindFirstObjectByType<PlayerSpawnGuard>();
+        if (guard != null) guard.RecenterNow();
+
         Debug.Log("[PuzzleManager] Puzzle aborted — board cleared.");
     }
 
@@ -335,9 +341,20 @@ public class PuzzleManager : MonoBehaviour
     {
         LastPuzzleSeconds = Time.time - _puzzleStartTime;
         Debug.Log($"[PuzzleManager] Puzzle complete! (Robot · {_currentDifficulty}) in {LastPuzzleSeconds:F1}s");
-        // TODO: Trigger celebration FX — confetti particle system, completion sound,
-        //       "Well done!" UI panel.
+
+        // Clear the finished board BEFORE notifying listeners so the menu reopens onto an empty
+        // room — the solved robot used to stay sitting there ("the puzzle is still behind"), and on
+        // dark difficulties the room stayed pitch black until a manual restart.
+        _puzzleStarted = false;
+        HideEverything();
+
+        // PuzzleWinHUD reads LastPuzzleSeconds; DifficultyUI reopens the menu; HardModeDarkroom
+        // restores the room lighting — all via this event.
         OnPuzzleCompleted?.Invoke(_currentDifficulty);
+
+        // Face the player back at the difficulty panel for the next pick.
+        var guard = FindFirstObjectByType<PlayerSpawnGuard>();
+        if (guard != null) guard.RecenterNow();
     }
 
     /// Every managed piece across the shared list and all per-difficulty sets.

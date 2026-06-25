@@ -2,15 +2,23 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-/// Manages colour-matching hints across all active piece–snap-zone pairs, plus a "find me"
-/// flicker for pieces lost in a dark room.
+/// Drives the colour-match + "find-me" blink hints for the robot puzzle.
 ///
-/// A piece + its snap zone fade to the same distinct palette colour when EITHER:
-///   • global overload  — CognitiveLoadAdapter reports stress above its hint threshold, OR
-///   • per-piece struggle — the player has spent too long on, or repeatedly grabbed, THAT piece.
+/// DESIGN (one hint, one piece, sequential):
+///   The system ever highlights AT MOST ONE piece at a time — the current "focus" piece. It and
+///   its matching snap zone fade to the same distinct palette colour, and the piece flickers
+///   (emissive blink) so it is unmistakable which piece to place next. The focus stays LOCKED on
+///   that one piece until the player actually places it; only then can the next hint appear. So
+///   hints never flood the board, and a new colour/blink cue only shows up after the hinted piece
+///   has been solved.
 ///
-/// In a dark room, a piece that stays unsolved for a long time also flickers (emissive glow)
-/// so the player can find it, then match it to its same-coloured ghost.
+/// WHEN A HINT APPEARS (the focus is chosen when EITHER trigger fires):
+///   • colour-match — the player has accumulated ≥ colorMatchHoldSeconds of HOLD time on one piece
+///                    (they keep picking it up but can't find where it goes).
+///   • blink        — ≥ blinkIdleSeconds have passed since the last piece was placed (they're stuck
+///                    and not making progress).
+///   A high sustained Muse stress reading halves both wait times so an overwhelmed player gets help
+///   sooner, but it still only ever surfaces ONE piece.
 ///
 /// PuzzleManager calls RegisterPairs() each time a puzzle starts.
 public class PieceHintSystem : MonoBehaviour
@@ -23,24 +31,20 @@ public class PieceHintSystem : MonoBehaviour
         [HideInInspector] public Color hintColor;
         [HideInInspector] public float blend;   // current 0–1 hint blend for this pair
         [HideInInspector] public bool  glowing;
-        [HideInInspector] public bool  struggleReported;   // behaviour colour-hint event fired once
     }
 
     [Header("Fade")]
     [Tooltip("Time in seconds to fully fade a hint in or out (higher = slower, gentler).")]
-    public float transitionDuration = 1.3f;
-    [Tooltip("Seconds between successive help reveals. Help escalates ONE piece at a time at this " +
-             "cadence while the player stays stuck/stressed (nearest piece first), and retreats at " +
-             "the same rate once they recover — so hints never all appear at once.")]
-    public float hintInterval = 6f;
+    public float transitionDuration = 1.0f;
 
-    [Header("Per-piece struggle triggers")]
-    [Tooltip("Seconds a single piece may stay unsolved before its colour hint appears")]
-    public float struggleSeconds = 32f;
-    [Tooltip("Number of grabs of one piece before its colour hint appears")]
-    public int   struggleHeldCount = 6;
-    [Tooltip("Seconds a piece may stay lost in a DARK room before it starts flickering")]
-    public float lostSeconds = 30f;
+    [Header("Hint triggers (one piece at a time)")]
+    [Tooltip("Accumulated seconds the player may HOLD a single piece before its colour-match hint " +
+             "(piece + slot share a colour) appears. They keep grabbing it but can't place it.")]
+    public float colorMatchHoldSeconds = 20f;
+    [Tooltip("Seconds since the LAST piece was placed before the next unsolved piece starts to " +
+             "blink. Resets every time a piece is placed, so the next hint only comes after real " +
+             "progress stalls again.")]
+    public float blinkIdleSeconds = 20f;
 
     [Header("References")]
     [Tooltip("Optional — wired by the scene builder; used to know whether the room is dark.")]
@@ -64,9 +68,10 @@ public class PieceHintSystem : MonoBehaviour
     };
 
     private List<PiecePair> _activePairs = new();
-    private bool             _globalHintWant;
-    private int              _helpLevel;       // how many pieces are currently being helped
-    private float            _nextStepTime;    // when help may next escalate / retreat
+    private bool             _globalHintWant;   // sustained Muse stress above the hint threshold
+    private PiecePair        _focus;            // the single piece currently being hinted (locked)
+    private float            _lastPlaceTime;    // Time.time a piece was last placed (blink timer base)
+    private int              _prevSolvedCount;
 
     private void Start()
     {
@@ -84,19 +89,21 @@ public class PieceHintSystem : MonoBehaviour
     }
 
     /// Called by PuzzleManager whenever a new puzzle starts.
-    /// Assigns palette colours to pairs and snaps to the current hint state.
+    /// Assigns palette colours to pairs and clears any active hint.
     public void RegisterPairs(List<PiecePair> pairs)
     {
         _activePairs = pairs;
+        _focus           = null;
+        _prevSolvedCount = 0;
+        _lastPlaceTime   = Time.time;   // first blink only after blinkIdleSeconds of no progress
         for (int i = 0; i < _activePairs.Count; i++)
         {
             var pair = _activePairs[i];
-            pair.hintColor       = k_Palette[i % k_Palette.Length];
-            pair.blend           = _globalHintWant ? 1f : 0f;
-            pair.glowing         = false;
-            pair.struggleReported = false;
-            pair.piece?.SetHintColor(pair.hintColor, pair.blend);
-            pair.snapZone?.SetHintColor(pair.hintColor, pair.blend);
+            pair.hintColor = k_Palette[i % k_Palette.Length];
+            pair.blend     = 0f;
+            pair.glowing   = false;
+            pair.piece?.SetHintColor(pair.hintColor, 0f);
+            pair.snapZone?.SetHintColor(pair.hintColor, 0f);
             pair.piece?.SetGlow(false);
         }
     }
@@ -114,7 +121,7 @@ public class PieceHintSystem : MonoBehaviour
         return i >= 0 && i < n.Length - 1 ? n.Substring(i + 1) : n;
     }
 
-    /// Unsolved active pairs ordered nearest-to-the-player first (the order help is granted in).
+    /// Unsolved active pairs ordered nearest-to-the-player first.
     private List<PiecePair> OrderedUnsolved()
     {
         var cam = Camera.main;
@@ -132,63 +139,74 @@ public class PieceHintSystem : MonoBehaviour
     {
         if (_activePairs.Count == 0) return;
 
-        bool  dark = puzzleManager != null && puzzleManager.IsDarkRoom;
         float step = transitionDuration > 0f ? Time.deltaTime / transitionDuration : 1f;
 
         var ordered = OrderedUnsolved();
-        _helpLevel  = Mathf.Clamp(_helpLevel, 0, ordered.Count);
 
-        // ── Is help WANTED right now? ───────────────────────────────────────────
-        // Muse: sustained stress above the (baseline-relative) hint threshold.
-        bool museWant = _globalHintWant;
-        // Behaviour: the player has been stuck on the puzzle for a while, or re-grabbed a lot.
-        bool stuckWant = false;
-        foreach (var p in ordered)
-            if (p.piece.UnsolvedSeconds >= struggleSeconds || p.piece.HeldCount >= struggleHeldCount)
-            { stuckWant = true; break; }
-        bool wanted = museWant || stuckWant;
-
-        // ── Escalate / retreat help ONE piece at a time, at hintInterval cadence ──
-        if (Time.time >= _nextStepTime)
+        // ── Track placement progress → reset the blink timer whenever a piece is placed ──
+        int solved = _activePairs.Count - ordered.Count;
+        if (solved > _prevSolvedCount)
         {
-            int prev = _helpLevel;
-            if      (wanted && _helpLevel < ordered.Count) _helpLevel++;
-            else if (!wanted && _helpLevel > 0)            _helpLevel--;
+            _prevSolvedCount = solved;
+            _lastPlaceTime   = Time.time;   // next blink waits a fresh blinkIdleSeconds
+        }
 
-            if (_helpLevel != prev)
+        // ── Release the focus once its piece is placed (lets the NEXT hint appear) ──
+        if (_focus != null && (_focus.piece == null || _focus.piece.IsSolved))
+            _focus = null;
+
+        // ── Choose a focus if none is locked and a trigger has fired ──
+        if (_focus == null && ordered.Count > 0)
+        {
+            float mul       = _globalHintWant ? 0.5f : 1f;   // Muse stress → help sooner
+            float colorNeed = Mathf.Max(4f, colorMatchHoldSeconds * mul);
+            float blinkNeed = Mathf.Max(4f, blinkIdleSeconds     * mul);
+
+            // colour-match: the piece they keep holding but can't place.
+            PiecePair held = null;
+            foreach (var p in ordered)
+                if ((p.piece.IsHeld || p.piece.TotalHeldSeconds > 0f) &&
+                    (held == null || p.piece.TotalHeldSeconds > held.piece.TotalHeldSeconds))
+                    held = p;
+            bool colorTrig = held != null && held.piece.TotalHeldSeconds >= colorNeed;
+
+            // blink: stalled — no piece placed for a while.
+            bool blinkTrig = (Time.time - _lastPlaceTime) >= blinkNeed;
+
+            if (colorTrig)
             {
-                _nextStepTime = Time.time + Mathf.Max(0.5f, hintInterval);
-                if (_helpLevel > prev)   // a new piece just gained help → announce it
-                {
-                    var np  = ordered[_helpLevel - 1];
-                    var sig = museWant ? AdaptiveSignal.MuseStress : AdaptiveSignal.Behavior;
-                    AdaptiveEventBus.Report($"Hint: '{Pretty(np.piece.name)}' — matched to its slot", sig);
-                }
+                _focus = held;
+                AdaptiveEventBus.Report($"Hint: '{Pretty(_focus.piece.name)}' matches its coloured slot",
+                                        _globalHintWant ? AdaptiveSignal.MuseStress : AdaptiveSignal.Behavior);
+            }
+            else if (blinkTrig)
+            {
+                _focus = ordered[0];   // nearest unsolved
+                AdaptiveEventBus.Report($"Hint: look for the glowing '{Pretty(_focus.piece.name)}'",
+                                        _globalHintWant ? AdaptiveSignal.MuseStress : AdaptiveSignal.Behavior);
             }
         }
 
-        // ── Apply: the first _helpLevel nearest-unsolved pieces show the colour hint ──
-        for (int i = 0; i < ordered.Count; i++)
+        // ── Apply: ONLY the focus piece shows the colour + blink; everything else fades out ──
+        foreach (var pair in _activePairs)
         {
-            var pair  = ordered[i];
-            bool help = i < _helpLevel;
-            pair.blend = Mathf.MoveTowards(pair.blend, help ? 1f : 0f, step);
-            pair.piece.SetHintColor(pair.hintColor, pair.blend);
-            pair.snapZone?.SetHintColor(pair.hintColor, pair.blend);
+            if (pair.piece == null) continue;
+            bool isFocus = pair == _focus && !pair.piece.IsSolved;
 
-            // Find-me glow: ONLY the single focus piece (the nearest helped one) flickers in the
-            // dark — pieces never all flicker at once; it points to the one to place next.
-            bool wantGlow = dark && help && i == 0 && pair.piece.UnsolvedSeconds >= lostSeconds;
+            pair.blend = Mathf.MoveTowards(pair.blend, isFocus ? 1f : 0f, step);
+            if (!pair.piece.IsSolved)
+            {
+                pair.piece.SetHintColor(pair.hintColor, pair.blend);
+                pair.snapZone?.SetHintColor(pair.hintColor, pair.blend);
+            }
+
+            // Blink (emissive flicker) only on the single focus piece.
+            bool wantGlow = isFocus;
             if (wantGlow != pair.glowing)
             {
                 pair.piece.SetGlow(wantGlow);
                 pair.glowing = wantGlow;
             }
         }
-
-        // Clear any lingering glow on pieces that have since been solved.
-        foreach (var pair in _activePairs)
-            if (pair.piece != null && pair.piece.IsSolved && pair.glowing)
-            { pair.piece.SetGlow(false); pair.glowing = false; }
     }
 }
