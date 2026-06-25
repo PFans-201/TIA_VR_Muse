@@ -4,13 +4,13 @@ using UnityEngine.UI;
 using UnityEngine.XR.Interaction.Toolkit.UI;
 using TMPro;
 
-/// Self-contained, MOVABLE Muse debug overlay for VR (Quest).
+/// Self-contained Muse debug overlay for VR (Quest).
 ///
-/// Drop on any GameObject in the scene — at runtime it builds its own free-standing World Space
-/// window in front of the camera (not head-locked, so you can drag it where you like).
+/// Drop on any GameObject in the scene — at runtime it builds its own World Space window parented
+/// to the camera, so it stays FIXED in the player's view (head-locked) and never drifts around the
+/// scene.
 ///
 /// Window controls:
-///   • Drag the title bar (or the minimized circle) with the controller ray to reposition it.
 ///   • The "–" button in the title bar collapses the window to a small circle.
 ///   • Click the circle to open the window again.
 ///
@@ -23,8 +23,8 @@ using TMPro;
 public class MuseStatusHUD : MonoBehaviour
 {
     // ── Inspector ─────────────────────────────────────────────────────────────
-    [Header("Initial placement (camera-local metres at spawn)")]
-    [Tooltip("Where the window first appears relative to the headset. You can drag it afterwards.")]
+    [Header("Fixed placement (camera-local metres)")]
+    [Tooltip("Where the head-locked window sits relative to the headset (X+ right, Y- down, Z+ forward).")]
     public Vector3 spawnOffset = new Vector3(0.30f, -0.20f, 0.65f);
 
     [Tooltip("World-scale per canvas pixel. 0.0008 ≈ 37 cm wide panel at 65 cm depth.")]
@@ -321,19 +321,20 @@ public class MuseStatusHUD : MonoBehaviour
             return;
         }
 
-        // ── Root: free-standing World Space canvas placed in front of the camera (NOT parented to
-        //    it, so it can be dragged and stays put). Raycasters let the controller ray drag/click.
+        // ── Root: World Space canvas PARENTED to the camera so it stays fixed in the player's
+        //    view (head-locked) — it does not move around the scene. Raycasters let the controller
+        //    ray click the minimize / info buttons.
         var root = new GameObject("MuseHUD");
-        var camT = cam.transform;
-        root.transform.position = camT.position + camT.rotation * spawnOffset;
-        root.transform.rotation = camT.rotation;
-        root.transform.localScale = Vector3.one * hudScale;
+        root.transform.SetParent(cam.transform, worldPositionStays: false);
+        root.transform.localPosition = spawnOffset;
+        root.transform.localRotation = Quaternion.identity;
+        root.transform.localScale    = Vector3.one * hudScale;
 
         var canvas = root.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.WorldSpace;
         root.AddComponent<CanvasScaler>().dynamicPixelsPerUnit = 1f;
         root.AddComponent<GraphicRaycaster>();
-        root.AddComponent<TrackedDeviceGraphicRaycaster>();   // controller-ray clicks/drags in VR
+        root.AddComponent<TrackedDeviceGraphicRaycaster>();   // controller-ray clicks on the buttons
         root.GetComponent<RectTransform>().sizeDelta = new Vector2(PanelW, PanelH);
 
         EnsureEventSystem();
@@ -352,15 +353,14 @@ public class MuseStatusHUD : MonoBehaviour
         Stretch(panel);
         panel.gameObject.AddComponent<Image>().color = new Color(0.06f, 0.07f, 0.12f, 0.93f);
 
-        // Title bar — also the DRAG handle for the whole window.
+        // Title bar (holds the title + minimize / info buttons).
         var titleBar = MakeRect(panel, "TitleBar");
         Pin(titleBar, 0, PanelH - 26, PanelW, 26);
         titleBar.gameObject.AddComponent<Image>().color = new Color(0.10f, 0.12f, 0.20f, 1f);
-        titleBar.gameObject.AddComponent<HudDragHandle>().target = rootT;
 
         var titleTxt = AddTMP(titleBar, "TitleText");
         Stretch(titleTxt.GetComponent<RectTransform>());
-        titleTxt.text      = "  🧠  MUSE   (drag to move)";
+        titleTxt.text      = "  🧠  MUSE";
         titleTxt.fontSize  = 10.5f;
         titleTxt.fontStyle = FontStyles.Bold;
         titleTxt.color     = new Color(0.75f, 0.85f, 1.00f, 1f);
@@ -476,13 +476,12 @@ public class MuseStatusHUD : MonoBehaviour
         rt.anchoredPosition = Vector2.zero;
         rt.sizeDelta = new Vector2(CircleD, CircleD);
 
-        // The circle is both a drag handle and a button (click → expand).
+        // The circle is a button (click → expand). Fixed in view like the rest of the HUD.
         var img = _minimizedGO.AddComponent<Image>();
         img.color  = new Color(0.12f, 0.16f, 0.26f, 0.96f);
         img.sprite = CircleSprite();   // procedural so it stays round in a build
         img.type   = Image.Type.Simple;
 
-        _minimizedGO.AddComponent<HudDragHandle>().target = rootT;
         var btn = _minimizedGO.AddComponent<Button>();
         btn.targetGraphic = img;
         btn.onClick.AddListener(() => SetExpanded(true));
@@ -584,38 +583,5 @@ public class MuseStatusHUD : MonoBehaviour
     private void OnDestroy()
     {
         if (_tex != null) Destroy(_tex);
-    }
-}
-
-/// Drags the assigned target transform with the controller ray (or mouse in the Editor). Attach to
-/// any UI Graphic that should act as a window grab handle; it moves <see cref="target"/> so the
-/// grabbed point stays under the pointer, and keeps the window facing the camera.
-public class HudDragHandle : MonoBehaviour, IBeginDragHandler, IDragHandler
-{
-    [Tooltip("The transform to move (the HUD window root). Defaults to this object if unset.")]
-    public Transform target;
-
-    private Vector3 _offset;
-    private bool    _hasOffset;
-
-    public void OnBeginDrag(PointerEventData e)
-    {
-        var t = target != null ? target : transform;
-        if (e.pointerCurrentRaycast.isValid)
-        {
-            _offset = t.position - e.pointerCurrentRaycast.worldPosition;
-            _hasOffset = true;
-        }
-        else _hasOffset = false;
-    }
-
-    public void OnDrag(PointerEventData e)
-    {
-        if (!_hasOffset || !e.pointerCurrentRaycast.isValid) return;
-        var t = target != null ? target : transform;
-        t.position = e.pointerCurrentRaycast.worldPosition + _offset;
-
-        var cam = Camera.main;
-        if (cam != null) t.rotation = Quaternion.LookRotation(t.position - cam.transform.position);
     }
 }
