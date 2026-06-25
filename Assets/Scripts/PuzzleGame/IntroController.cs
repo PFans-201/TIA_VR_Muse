@@ -27,10 +27,21 @@ public class IntroController : MonoBehaviour
     public Button     okayButton;
     public TMP_Text   countdownLabel;      // shown during the rest count
 
-    private static MuseDirectAdapter Muse => MuseDirectAdapter.Instance;
+    [Header("Bridge handshake")]
+    [Tooltip("Seconds to wait for the bridge to acknowledge a baseline command before " +
+             "proceeding anyway (UDP path only; the on-device path is synchronous).")]
+    public float ackTimeout = 2f;
+
+    // Resolve the baseline-control path: on-device direct adapter (Quest BLE) takes
+    // precedence, else the UDP bridge adapter (PC over WiFi). Null = no EEG (Editor/desktop)
+    // and every baseline call simply no-ops.
+    private IMuseBaselineControl _baseline;
 
     private void Start()
     {
+        if (MuseDirectAdapter.Instance != null) _baseline = MuseDirectAdapter.Instance;
+        else                                    _baseline = MuseUdpAdapter.Instance;
+
         if (countdownLabel != null)   countdownLabel.gameObject.SetActive(false);
         if (explanationPanel != null) explanationPanel.SetActive(true);
         if (okayButton != null)       okayButton.onClick.AddListener(BeginRest);
@@ -45,9 +56,16 @@ public class IntroController : MonoBehaviour
     private IEnumerator RestRoutine()
     {
         if (explanationPanel != null) explanationPanel.SetActive(false);
-        if (countdownLabel != null)   countdownLabel.gameObject.SetActive(true);
+        if (countdownLabel != null)
+        {
+            countdownLabel.gameObject.SetActive(true);
+            countdownLabel.text = "Preparing the sensor...";
+        }
 
-        Muse?.StartRestBaseline();
+        // Tell the bridge to start capturing the rest window, and wait until it confirms it
+        // actually entered that phase — so the visible countdown lines up with what's recorded.
+        _baseline?.StartRestBaseline();
+        yield return WaitForAck(MuseUdpAdapter.CmdRestStart);
 
         float t = restSeconds;
         while (t > 0f)
@@ -58,11 +76,37 @@ public class IntroController : MonoBehaviour
             yield return null;
         }
 
-        if (Muse != null && !Muse.FinalizeRestBaseline())
-            Debug.LogWarning("[IntroController] rest baseline had no stable channel (poor contact?).");
+        // Commit the rest reference. The on-device adapter has a dedicated finalize; the UDP
+        // bridge just stops the rest phase (rest is informational — the active-VR baseline is
+        // the in-game reference).
+        if (_baseline is MuseDirectAdapter direct)
+        {
+            if (!direct.FinalizeRestBaseline())
+                Debug.LogWarning("[IntroController] rest baseline had no stable channel (poor contact?).");
+        }
+        else
+        {
+            _baseline?.StopRestBaseline();
+            yield return WaitForAck(MuseUdpAdapter.CmdRestStop);
+        }
 
         if (countdownLabel != null) countdownLabel.text = "Done - entering the tutorial...";
         yield return new WaitForSeconds(1.5f);
         SceneManager.LoadScene(nextScene);
+    }
+
+    /// On the UDP path, blocks until the bridge acknowledges <paramref name="cmd"/> (or the
+    /// timeout elapses, then proceeds with a warning). No-op on the on-device/no-EEG paths.
+    private IEnumerator WaitForAck(string cmd)
+    {
+        if (_baseline is not MuseUdpAdapter udp) yield break;
+        float t = 0f;
+        while (t < ackTimeout)
+        {
+            if (udp.ConsumeAck(cmd)) { Debug.Log($"[IntroController] bridge acked '{cmd}'."); yield break; }
+            t += Time.deltaTime;
+            yield return null;
+        }
+        Debug.LogWarning($"[IntroController] no '{cmd}' ack within {ackTimeout}s — proceeding anyway.");
     }
 }

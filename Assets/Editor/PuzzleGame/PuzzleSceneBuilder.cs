@@ -38,6 +38,11 @@ public static class PuzzleSceneBuilder
     private const string k_GameScene    = "Assets/Scenes/03_Game.unity";
     private const string k_SimPrefab    = "Assets/Samples/XR Interaction Toolkit/3.3.1/XR Interaction Simulator/XR Interaction Simulator.prefab";
 
+    // EEG transport baked into the session-flow build. Default = WiFi UDP bridge (a PC runs the
+    // Python bridge and streams stress to the Quest over WiFi, ports 5005/5006); the dedicated
+    // "on-device BLE" menu flips this for a standalone build that connects to the Muse itself.
+    private static bool s_useUdpBridge = true;
+
     // ── Menu items ───────────────────────────────────────────────────────────
 
     // (internal) builds the legacy 3 scenes; kept so the puzzle template can be regenerated.
@@ -167,7 +172,17 @@ public static class PuzzleSceneBuilder
     ///   02_Tutorial — control practice + interaction baseline (min 40 s) + Continue
     ///   03_Game     — difficulty selection (with Muse recommendation) + puzzle
     /// The Game scene is derived from ZenPuzzleRoom, so build that first (Build All Scenes).
-    [MenuItem("Puzzle Game/Build Session Flow Scenes (Intro-Tutorial-Game)")]
+    /// On-device BLE variant of the session-flow build (no PC bridge — the Quest connects to the
+    /// Muse over BLE itself). The default menu below builds the WiFi UDP-bridge variant.
+    [MenuItem("Puzzle Game/Build Session Flow Scenes (on-device BLE)")]
+    public static void BuildSessionFlowScenesBle()
+    {
+        s_useUdpBridge = false;
+        try { BuildSessionFlowScenes(); }
+        finally { s_useUdpBridge = true; }   // restore the UDP default
+    }
+
+    [MenuItem("Puzzle Game/Build Session Flow Scenes (Intro-Tutorial-Game, UDP bridge)")]
     public static void BuildSessionFlowScenes()
     {
         if (BlockedByPlayMode()) return;
@@ -218,10 +233,7 @@ public static class PuzzleSceneBuilder
         // Persistent EEG source (connects on the first scene, holds baselines across scenes).
         var cola = new GameObject("CognitiveLoadAdapter").AddComponent<CognitiveLoadAdapter>();
         cola.hintThreshold = 0.55f;
-        var eegGO  = new GameObject("MuseDirectAdapter");
-        var direct = eegGO.AddComponent<MuseDirectAdapter>();
-        eegGO.AddComponent<VelorexeBleTransport>();
-        direct.deviceNameContains = "Muse";   // cognitiveLoad left null -> auto-targets active scene's CLA
+        AddEegSource();   // UDP bridge (default) or on-device BLE, per the build menu used
 
         var intro = new GameObject("IntroController").AddComponent<IntroController>();
         intro.nextScene   = "02_Tutorial";
@@ -284,9 +296,10 @@ public static class PuzzleSceneBuilder
 
         var cola = new GameObject("CognitiveLoadAdapter").AddComponent<CognitiveLoadAdapter>();
         cola.hintThreshold = 0.55f;
+        AddEegSource();   // singleton-safe: the Intro scene's source persists; this seeds isolated tests
 
-        // Grab practice shelf + active grab objects (the persistent MuseDirectAdapter from
-        // the intro scene carries over and feeds this scene's CognitiveLoadAdapter).
+        // Grab practice shelf + active grab objects (the persistent EEG adapter from the intro
+        // scene carries over and feeds this scene's CognitiveLoadAdapter).
         AddBox("GrabShelf", new Vector3(0f, 0.55f, 1.8f), new Vector3(1.6f, 0.08f, 0.40f), tableMat);
         var grabMats = new[]
         {
@@ -378,7 +391,8 @@ public static class PuzzleSceneBuilder
         AssetDatabase.Refresh();
 
         var scene = EditorSceneManager.OpenScene(k_GameScene, OpenSceneMode.Single);
-        ApplyDirectBle();   // ensure on-device BLE source (idempotent)
+        if (s_useUdpBridge) ApplyUdpBridge();   // WiFi UDP source (default)
+        else                ApplyDirectBle();   // on-device BLE source
         ApplyVRUIFix();     // ensure VR interaction
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene);
@@ -444,6 +458,55 @@ public static class PuzzleSceneBuilder
             new GameObject("XR Interaction Manager").AddComponent<XRInteractionManager>();
 
         return added;
+    }
+
+    /// EEG source for the session-flow scenes, chosen by s_useUdpBridge:
+    ///   UDP bridge (default) — a MuseUdpAdapter (PC streams stress over WiFi, ports 5005/5006);
+    ///   on-device BLE        — a MuseDirectAdapter + BLE transport (Quest connects to the Muse).
+    /// Both are DontDestroyOnLoad singletons, so the first scene's source carries through the
+    /// flow and any later duplicate self-destroys on Awake. cognitiveLoad is left null so the
+    /// adapter auto-targets whichever scene's CognitiveLoadAdapter is active.
+    private static void AddEegSource()
+    {
+        if (s_useUdpBridge)
+        {
+            if (Object.FindFirstObjectByType<MuseUdpAdapter>() != null) return;
+            var go  = new GameObject("MuseUdpAdapter");
+            var udp = go.AddComponent<MuseUdpAdapter>();
+            udp.port        = 5005;
+            udp.controlPort = 5006;
+        }
+        else
+        {
+            if (Object.FindFirstObjectByType<MuseDirectAdapter>() != null) return;
+            var go     = new GameObject("MuseDirectAdapter");
+            var direct = go.AddComponent<MuseDirectAdapter>();
+            go.AddComponent<VelorexeBleTransport>();
+            direct.deviceNameContains = "Muse";
+        }
+    }
+
+    /// Game-scene EEG wiring for the UDP-bridge path: disables the puzzle template's BrainFlow
+    /// (MuseAthenaAdapter) and any direct-BLE source so they can't fight the UDP stream or fail
+    /// on the Quest, then ensures a MuseUdpAdapter is present. Singleton-safe — the persistent
+    /// adapter from the Intro scene wins at runtime; the baked one self-destructs.
+    private static bool ApplyUdpBridge()
+    {
+        var cola = Object.FindFirstObjectByType<CognitiveLoadAdapter>();
+        if (cola == null) return false;                                       // scene doesn't consume stress
+
+        var athena = Object.FindFirstObjectByType<MuseAthenaAdapter>();
+        if (athena != null) athena.enabled = false;
+        var direct = Object.FindFirstObjectByType<MuseDirectAdapter>();
+        if (direct != null) direct.enabled = false;
+
+        if (Object.FindFirstObjectByType<MuseUdpAdapter>() != null) return false;
+        var go  = new GameObject("MuseUdpAdapter");
+        var udp = go.AddComponent<MuseUdpAdapter>();
+        udp.cognitiveLoad = cola;
+        udp.port          = 5005;
+        udp.controlPort   = 5006;
+        return true;
     }
 
     /// Swaps the open scene's EEG source to on-device direct BLE. Returns true if it

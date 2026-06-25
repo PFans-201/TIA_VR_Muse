@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -27,6 +28,12 @@ using UnityEngine;
 public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
 {
     public static MuseUdpAdapter Instance { get; private set; }
+
+    // Baseline-control command names — must match the Python bridge's run_session_unity.
+    public const string CmdRestStart   = "baseline_rest_start";
+    public const string CmdRestStop    = "baseline_rest_stop";
+    public const string CmdActiveStart = "baseline_active_start";
+    public const string CmdActiveStop  = "baseline_active_stop";
 
     [Header("UDP")]
     [Tooltip("Port the Python bridge sends to (muse_bridge.py --udp-port). Default 5005.")]
@@ -64,6 +71,12 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
     private readonly ConcurrentQueue<Reading> _queue = new ConcurrentQueue<Reading>();
     private float _lastPacketTime;
 
+    // Command acknowledgements from the bridge.
+    private Thread _ackThread;
+    private volatile bool _ackRunning;
+    private readonly ConcurrentQueue<string> _ackQueue = new ConcurrentQueue<string>();
+    private readonly HashSet<string> _ackedCommands = new HashSet<string>();   // main-thread only
+
     /// Sends a baseline command to the bridge's --unity state machine, e.g.
     /// "baseline_rest_start", "baseline_rest_stop", "baseline_active_start",
     /// "baseline_active_stop", "reset". No-op friendly: if the bridge isn't running
@@ -72,7 +85,8 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
     {
         try
         {
-            _ctrlSender ??= new UdpClient();
+            EnsureCtrlSender();
+            _ackedCommands.Remove(cmd);   // mark this command pending until (re)acked
             byte[] payload = Encoding.UTF8.GetBytes("{\"cmd\":\"" + cmd + "\"}\n");
             _ctrlSender.Send(payload, payload.Length, bridgeHost, controlPort);
             Debug.Log($"[MuseUdpAdapter] control -> {cmd}");
@@ -80,6 +94,44 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
         catch (Exception e)
         {
             Debug.LogWarning($"[MuseUdpAdapter] control send failed: {e.Message}");
+        }
+    }
+
+    /// True (and consumes it) if the bridge has acknowledged <paramref name="cmd"/> since it
+    /// was last sent. A caller polls this each frame until it returns true or a timeout elapses,
+    /// so the on-screen baseline countdown only starts once the bridge has entered that phase.
+    public bool ConsumeAck(string cmd) => _ackedCommands.Remove(cmd);
+
+    private void EnsureCtrlSender()
+    {
+        if (_ctrlSender != null) return;
+        _ctrlSender = new UdpClient();
+        _ackRunning = true;
+        _ackThread  = new Thread(AckReceiveLoop) { IsBackground = true, Name = "MuseUdpAck" };
+        _ackThread.Start();
+    }
+
+    /// Background reader for the bridge's command acknowledgements. The bridge replies on the
+    /// same socket we send commands from, so this receives on _ctrlSender and queues acks for
+    /// the main thread to fold into _ackedCommands.
+    private void AckReceiveLoop()
+    {
+        var remote = new IPEndPoint(IPAddress.Any, 0);
+        while (_ackRunning)
+        {
+            try
+            {
+                byte[] bytes = _ctrlSender.Receive(ref remote);
+                foreach (var line in Encoding.UTF8.GetString(bytes).Split('\n'))
+                {
+                    string s = line.Trim();
+                    if (s.Length == 0) continue;
+                    AckMsg a = JsonUtility.FromJson<AckMsg>(s);
+                    if (!string.IsNullOrEmpty(a.ack)) _ackQueue.Enqueue(a.ack);
+                }
+            }
+            catch (SocketException) { /* socket closed on stop */ }
+            catch (Exception e) { Debug.LogWarning($"[MuseUdpAdapter] ack parse: {e.Message}"); }
         }
     }
 
@@ -102,6 +154,9 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
         // 'bands' and 'progress' are intentionally omitted — JsonUtility ignores
         // unknown JSON fields, so we only declare what we consume.
     }
+
+    [Serializable]
+    private struct AckMsg { public string ack; }
 
     private void Awake()
     {
@@ -164,6 +219,9 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
 
     private void Update()
     {
+        // Fold any acknowledgements the receive thread captured into the main-thread set.
+        while (_ackQueue.TryDequeue(out string acked)) _ackedCommands.Add(acked);
+
         bool got = false;
         while (_queue.TryDequeue(out Reading r))
         {
@@ -191,13 +249,16 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
 
     private void StopListener()
     {
-        _running = false;
+        _running    = false;
+        _ackRunning = false;
         try { _udp?.Close(); } catch { }
         try { _thread?.Join(200); } catch { }
         try { _ctrlSender?.Close(); } catch { }
+        try { _ackThread?.Join(200); } catch { }
         _udp = null;
         _thread = null;
         _ctrlSender = null;
+        _ackThread = null;
         _status = "stopped";
     }
 

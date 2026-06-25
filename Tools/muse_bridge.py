@@ -446,7 +446,7 @@ def run_session_unity(args, send, ctrl_sock, recorder=None):
     def ctrl_loop():
         while running["on"]:
             try:
-                data, _ = ctrl_sock.recvfrom(1024)
+                data, addr = ctrl_sock.recvfrom(1024)
             except OSError:
                 break
             for line in data.decode(errors="ignore").split("\n"):
@@ -454,9 +454,17 @@ def run_session_unity(args, send, ctrl_sock, recorder=None):
                 if not line:
                     continue
                 try:
-                    commands.append(json.loads(line).get("cmd", ""))
+                    commands.append((json.loads(line).get("cmd", ""), addr))
                 except Exception:
-                    commands.append(line)
+                    commands.append((line, addr))
+
+    def ack(addr, cmd):
+        # Acknowledge a command back to its sender so Unity's baseline countdown only starts
+        # once the bridge has actually entered the phase (the "delay acknowledgement").
+        try:
+            ctrl_sock.sendto((json.dumps({"ack": cmd}) + "\n").encode(), addr)
+        except OSError:
+            pass
 
     threading.Thread(target=ctrl_loop, daemon=True, name="MuseCtrl").start()
 
@@ -469,7 +477,7 @@ def run_session_unity(args, send, ctrl_sock, recorder=None):
         while True:
             time.sleep(args.update)
             while commands:
-                cmd = commands.popleft()
+                cmd, addr = commands.popleft()
                 if cmd == "baseline_rest_start":
                     state, rest = "rest", collections.defaultdict(list)
                     print("[CTRL] rest baseline started")
@@ -492,6 +500,7 @@ def run_session_unity(args, send, ctrl_sock, recorder=None):
                     state, base = "idle", {}
                     rest, active = collections.defaultdict(list), collections.defaultdict(list)
                     print("[CTRL] reset")
+                ack(addr, cmd)
 
             window, _ = reader.get_window(args.window)
             bp = per_channel_band_powers(window, SAMPLE_RATE) if window is not None else {}

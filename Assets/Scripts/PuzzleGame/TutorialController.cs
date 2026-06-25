@@ -27,16 +27,40 @@ public class TutorialController : MonoBehaviour
     public Button     continueButton;
     public TMP_Text   timerLabel;
 
-    private static MuseDirectAdapter Muse => MuseDirectAdapter.Instance;
+    [Header("Bridge handshake")]
+    [Tooltip("Seconds to wait for the bridge to acknowledge a baseline command before " +
+             "proceeding anyway (UDP path only; the on-device path is synchronous).")]
+    public float ackTimeout = 2f;
+
+    // On-device direct adapter (Quest BLE) takes precedence, else the UDP bridge adapter.
+    private IMuseBaselineControl _baseline;
     private bool _canProceed;
 
     private void Start()
     {
+        if (MuseDirectAdapter.Instance != null) _baseline = MuseDirectAdapter.Instance;
+        else                                    _baseline = MuseUdpAdapter.Instance;
+
         if (proceedPanel != null)   proceedPanel.SetActive(false);
         if (continueButton != null) continueButton.onClick.AddListener(Proceed);
 
-        Muse?.StartTutorialBaseline();   // stream vs rest + collect active reference
+        StartCoroutine(BeginTutorialBaseline());   // stream vs rest + collect active reference
         StartCoroutine(MinTimer());
+    }
+
+    private IEnumerator BeginTutorialBaseline()
+    {
+        // On-device path streams stress-vs-rest while collecting the active reference; the UDP
+        // bridge has a single active-VR baseline phase. Wait for the bridge's ack either way.
+        if (_baseline is MuseDirectAdapter direct)
+        {
+            direct.StartTutorialBaseline();
+        }
+        else
+        {
+            _baseline?.StartActiveBaseline();
+            yield return WaitForAck(MuseUdpAdapter.CmdActiveStart);
+        }
     }
 
     private IEnumerator MinTimer()
@@ -57,7 +81,32 @@ public class TutorialController : MonoBehaviour
     private void Proceed()
     {
         if (!_canProceed) return;   // ignore early clicks before the minimum elapses
-        Muse?.FinalizeBaseline();   // commits the active-VR reference (logs if no stable channel)
+        if (continueButton != null) continueButton.interactable = false;
+        StartCoroutine(FinalizeAndLoad());
+    }
+
+    private IEnumerator FinalizeAndLoad()
+    {
+        // Commit the active-VR reference, then wait for the bridge to confirm it finalized and
+        // switched to streaming before loading the game — so the puzzle reads real stress, not
+        // the neutral 0.5 the bridge emits during the baseline phase.
+        _baseline?.FinalizeBaseline();
+        yield return WaitForAck(MuseUdpAdapter.CmdActiveStop);
         SceneManager.LoadScene(nextScene);
+    }
+
+    /// On the UDP path, blocks until the bridge acknowledges <paramref name="cmd"/> (or the
+    /// timeout elapses, then proceeds with a warning). No-op on the on-device/no-EEG paths.
+    private IEnumerator WaitForAck(string cmd)
+    {
+        if (_baseline is not MuseUdpAdapter udp) yield break;
+        float t = 0f;
+        while (t < ackTimeout)
+        {
+            if (udp.ConsumeAck(cmd)) { Debug.Log($"[TutorialController] bridge acked '{cmd}'."); yield break; }
+            t += Time.deltaTime;
+            yield return null;
+        }
+        Debug.LogWarning($"[TutorialController] no '{cmd}' ack within {ackTimeout}s — proceeding anyway.");
     }
 }
