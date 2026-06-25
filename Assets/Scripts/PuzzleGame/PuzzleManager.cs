@@ -72,7 +72,7 @@ public class PuzzleManager : MonoBehaviour
     };
     public DifficultySettings hardSettings = new DifficultySettings
     {
-        pieceCount = 22, magnetForce = 2f,  magnetRange = 0.08f, magnetWhileHeld = false,
+        pieceCount = 22, magnetForce = 2f,  magnetRange = 0.05f, magnetWhileHeld = false,
         spawnMode = SpawnMode.CeilingDrop, startOffset = 0f,
         pieceBrightness = 0.30f, ghostIdleAlpha = 0.05f, ghostActiveAlpha = 0.14f
     };
