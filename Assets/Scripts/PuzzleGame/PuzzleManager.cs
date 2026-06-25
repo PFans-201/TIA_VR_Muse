@@ -57,9 +57,12 @@ public class PuzzleManager : MonoBehaviour
     [Header("Difficulty Settings")]
     public DifficultySettings easySettings = new DifficultySettings
     {
-        pieceCount = 5,  magnetForce = 12f, magnetRange = 0.22f, magnetWhileHeld = true,
-        spawnMode = SpawnMode.NearSolved, startOffset = 0.10f,
-        pieceBrightness = 1.00f, ghostIdleAlpha = 0.50f, ghostActiveAlpha = 0.75f
+        // startOffset (0.30) is deliberately LARGER than magnetRange (0.12) so pieces do NOT
+        // auto-snap the moment the puzzle starts — the player must carry each piece into range.
+        // magnetWhileHeld still lets it click home from the hand once it's close (Easy convenience).
+        pieceCount = 5,  magnetForce = 8f, magnetRange = 0.12f, magnetWhileHeld = true,
+        spawnMode = SpawnMode.NearSolved, startOffset = 0.30f,
+        pieceBrightness = 1.00f, ghostIdleAlpha = 0.55f, ghostActiveAlpha = 0.80f
     };
     public DifficultySettings mediumSettings = new DifficultySettings
     {

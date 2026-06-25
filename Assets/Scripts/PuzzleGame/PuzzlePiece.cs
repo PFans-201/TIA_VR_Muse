@@ -61,6 +61,10 @@ public class PuzzlePiece : MonoBehaviour
     // Grey that matches the zen room walls — pieces blend towards this on Hard
     private static readonly Color k_ZenGrey = new Color(0.87f, 0.87f, 0.87f);
 
+    // Neutral grey a piece turns when correctly PLACED, so finished pieces recede and the
+    // remaining (still-coloured) pieces stand out. Used when no solvedMaterial is assigned.
+    private static readonly Color k_PlacedGrey = new Color(0.55f, 0.55f, 0.57f);
+
     private Rigidbody   _rb;
     private UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable _grab;
     private Renderer    _renderer;
@@ -104,6 +108,21 @@ public class PuzzlePiece : MonoBehaviour
         TotalHeldSeconds = 0f;
         _magnetVel       = Vector3.zero;
         SetGlow(false);
+
+        // Reset the SOLVED state too — a piece reused on a puzzle restart must behave like new.
+        // MarkAsSolved disables the piece's colliders + grab and makes it kinematic; without this,
+        // a previously-solved piece comes back with no colliders and falls through the table/floor
+        // (the "2nd try, pieces fell through the block" bug), and can't be grabbed.
+        _isSolved    = false;
+        _isBeingHeld = false;
+        if (_grab != null) _grab.enabled = true;
+        if (_rb   != null) { _rb.isKinematic = false; _rb.linearVelocity = Vector3.zero; _rb.angularVelocity = Vector3.zero; }
+        foreach (var col in GetComponentsInChildren<Collider>()) col.enabled = true;
+        if (_renderer != null && _matInstance != null)
+        {
+            _renderer.material = _matInstance;   // restore the coloured instance (MarkAsSolved swapped it)
+            UpdateMaterialColor();
+        }
     }
 
     private void OnDisable()
@@ -225,8 +244,16 @@ public class PuzzlePiece : MonoBehaviour
         // can nest the remaining pieces flush against the assembly instead of being blocked.
         foreach (var col in GetComponentsInChildren<Collider>()) col.enabled = false;
 
+        // Placed pieces go grey (coloured = still to place). Use the assigned solvedMaterial if
+        // there is one, otherwise just tint this piece's own material grey so prefab pieces don't
+        // need a dedicated material.
         if (solvedMaterial != null && _renderer != null)
             _renderer.material = solvedMaterial;
+        else if (_matInstance != null)
+        {
+            _matInstance.SetColor("_EmissionColor", Color.black);
+            _matInstance.color = k_PlacedGrey;
+        }
 
         Debug.Log($"[PuzzlePiece] '{name}' solved!");
         OnPieceSolved?.Invoke();
