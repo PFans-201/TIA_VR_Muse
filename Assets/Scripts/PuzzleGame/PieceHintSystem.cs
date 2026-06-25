@@ -24,15 +24,15 @@ public class PieceHintSystem : MonoBehaviour
         [HideInInspector] public float blend;   // current 0–1 hint blend for this pair
         [HideInInspector] public bool  glowing;
         [HideInInspector] public bool  struggleReported;   // behaviour colour-hint event fired once
-        [HideInInspector] public float revealDelay;        // staggered global-hint start (s), nearest first
     }
 
     [Header("Fade")]
     [Tooltip("Time in seconds to fully fade a hint in or out (higher = slower, gentler).")]
     public float transitionDuration = 1.3f;
-    [Tooltip("When global colour hints turn on, reveal pieces SEQUENTIALLY, nearest to the player " +
-             "first, this many seconds apart (0 = all at once).")]
-    public float hintStagger = 0.7f;
+    [Tooltip("Seconds between successive help reveals. Help escalates ONE piece at a time at this " +
+             "cadence while the player stays stuck/stressed (nearest piece first), and retreats at " +
+             "the same rate once they recover — so hints never all appear at once.")]
+    public float hintInterval = 6f;
 
     [Header("Per-piece struggle triggers")]
     [Tooltip("Seconds a single piece may stay unsolved before its colour hint appears")]
@@ -65,8 +65,8 @@ public class PieceHintSystem : MonoBehaviour
 
     private List<PiecePair> _activePairs = new();
     private bool             _globalHintWant;
-    private bool             _prevGlobalHintWant;
-    private float            _globalOnTime;   // Time.time when global hints turned on (for staggering)
+    private int              _helpLevel;       // how many pieces are currently being helped
+    private float            _nextStepTime;    // when help may next escalate / retreat
 
     private void Start()
     {
@@ -114,80 +114,81 @@ public class PieceHintSystem : MonoBehaviour
         return i >= 0 && i < n.Length - 1 ? n.Substring(i + 1) : n;
     }
 
-    /// Ranks the active (unsolved) pairs by distance to the player and assigns each a staggered
-    /// reveal delay so the global colour hint lights pieces up sequentially, nearest first.
-    private void AssignRevealOrder()
+    /// Unsolved active pairs ordered nearest-to-the-player first (the order help is granted in).
+    private List<PiecePair> OrderedUnsolved()
     {
         var cam = Camera.main;
         Vector3 eye = cam != null ? cam.transform.position : Vector3.zero;
-
-        var order = new List<PiecePair>(_activePairs);
-        order.Sort((a, b) =>
-        {
-            float da = a.piece != null ? (a.piece.transform.position - eye).sqrMagnitude : float.MaxValue;
-            float db = b.piece != null ? (b.piece.transform.position - eye).sqrMagnitude : float.MaxValue;
-            return da.CompareTo(db);
-        });
-        float stagger = Mathf.Max(0f, hintStagger);
-        for (int i = 0; i < order.Count; i++)
-            order[i].revealDelay = i * stagger;
+        var list = new List<PiecePair>();
+        foreach (var p in _activePairs)
+            if (p.piece != null && !p.piece.IsSolved) list.Add(p);
+        list.Sort((a, b) =>
+            (a.piece.transform.position - eye).sqrMagnitude
+            .CompareTo((b.piece.transform.position - eye).sqrMagnitude));
+        return list;
     }
 
     private void Update()
     {
         if (_activePairs.Count == 0) return;
 
-        bool dark   = puzzleManager != null && puzzleManager.IsDarkRoom;
-        float step  = transitionDuration > 0f ? Time.deltaTime / transitionDuration : 1f;
+        bool  dark = puzzleManager != null && puzzleManager.IsDarkRoom;
+        float step = transitionDuration > 0f ? Time.deltaTime / transitionDuration : 1f;
 
-        // Global colour-hint switched on by Muse stress → assign a staggered, nearest-first reveal
-        // order and report once (affects every piece, but they light up one by one).
-        if (_globalHintWant && !_prevGlobalHintWant)
+        var ordered = OrderedUnsolved();
+        _helpLevel  = Mathf.Clamp(_helpLevel, 0, ordered.Count);
+
+        // ── Is help WANTED right now? ───────────────────────────────────────────
+        // Muse: sustained stress above the (baseline-relative) hint threshold.
+        bool museWant = _globalHintWant;
+        // Behaviour: the player has been stuck on the puzzle for a while, or re-grabbed a lot.
+        bool stuckWant = false;
+        foreach (var p in ordered)
+            if (p.piece.UnsolvedSeconds >= struggleSeconds || p.piece.HeldCount >= struggleHeldCount)
+            { stuckWant = true; break; }
+        bool wanted = museWant || stuckWant;
+
+        // ── Escalate / retreat help ONE piece at a time, at hintInterval cadence ──
+        if (Time.time >= _nextStepTime)
         {
-            AssignRevealOrder();
-            _globalOnTime = Time.time;
-            AdaptiveEventBus.Report("Colour hints on — pieces light up one by one, nearest first", AdaptiveSignal.MuseStress);
+            int prev = _helpLevel;
+            if      (wanted && _helpLevel < ordered.Count) _helpLevel++;
+            else if (!wanted && _helpLevel > 0)            _helpLevel--;
+
+            if (_helpLevel != prev)
+            {
+                _nextStepTime = Time.time + Mathf.Max(0.5f, hintInterval);
+                if (_helpLevel > prev)   // a new piece just gained help → announce it
+                {
+                    var np  = ordered[_helpLevel - 1];
+                    var sig = museWant ? AdaptiveSignal.MuseStress : AdaptiveSignal.Behavior;
+                    AdaptiveEventBus.Report($"Hint: '{Pretty(np.piece.name)}' — matched to its slot", sig);
+                }
+            }
         }
-        _prevGlobalHintWant = _globalHintWant;
 
-        foreach (var pair in _activePairs)
+        // ── Apply: the first _helpLevel nearest-unsolved pieces show the colour hint ──
+        for (int i = 0; i < ordered.Count; i++)
         {
-            var piece = pair.piece;
-            if (piece == null || piece.IsSolved)
-            {
-                if (pair.glowing) { pair.piece?.SetGlow(false); pair.glowing = false; }
-                continue;
-            }
-
-            // Colour hint: global overload OR this specific piece has been a struggle.
-            bool struggling = piece.UnsolvedSeconds >= struggleSeconds ||
-                              piece.HeldCount      >= struggleHeldCount;
-
-            // Per-piece struggle (behaviour) hint — report once, only when global isn't already on.
-            if (struggling && !_globalHintWant && !pair.struggleReported)
-            {
-                AdaptiveEventBus.Report($"Colour hint: '{Pretty(piece.name)}' (stuck on it)", AdaptiveSignal.Behavior);
-                pair.struggleReported = true;
-            }
-
-            // Global hint reveals sequentially: this pair only starts once its staggered delay
-            // (nearest-first) has elapsed. Per-piece struggle hints ignore the stagger.
-            bool globalShown = _globalHintWant && (Time.time - _globalOnTime) >= pair.revealDelay;
-            float target = (globalShown || struggling) ? 1f : 0f;
-
-            pair.blend = Mathf.MoveTowards(pair.blend, target, step);
-            piece.SetHintColor(pair.hintColor, pair.blend);
+            var pair  = ordered[i];
+            bool help = i < _helpLevel;
+            pair.blend = Mathf.MoveTowards(pair.blend, help ? 1f : 0f, step);
+            pair.piece.SetHintColor(pair.hintColor, pair.blend);
             pair.snapZone?.SetHintColor(pair.hintColor, pair.blend);
 
-            // Find-me flicker for a piece lost in the dark.
-            bool wantGlow = dark && piece.UnsolvedSeconds >= lostSeconds;
+            // Find-me glow: ONLY the single focus piece (the nearest helped one) flickers in the
+            // dark — pieces never all flicker at once; it points to the one to place next.
+            bool wantGlow = dark && help && i == 0 && pair.piece.UnsolvedSeconds >= lostSeconds;
             if (wantGlow != pair.glowing)
             {
-                piece.SetGlow(wantGlow);
+                pair.piece.SetGlow(wantGlow);
                 pair.glowing = wantGlow;
-                if (wantGlow)
-                    AdaptiveEventBus.Report($"Find-me glow: '{Pretty(piece.name)}' (lost in the dark)", AdaptiveSignal.Behavior);
             }
         }
+
+        // Clear any lingering glow on pieces that have since been solved.
+        foreach (var pair in _activePairs)
+            if (pair.piece != null && pair.piece.IsSolved && pair.glowing)
+            { pair.piece.SetGlow(false); pair.glowing = false; }
     }
 }

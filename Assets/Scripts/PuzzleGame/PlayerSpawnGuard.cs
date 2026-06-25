@@ -34,11 +34,15 @@ public class PlayerSpawnGuard : MonoBehaviour
     [Tooltip("Recenter the play space to the authored spawn XZ once, a few frames after each " +
              "scene loads — so the player no longer has to reload to fix their start position.")]
     public bool recenterOnSceneLoad = true;
+    [Tooltip("Also yaw the play space ONCE on load so the player faces the authored forward (the " +
+             "text panels / puzzle), regardless of which way the headset booted facing.")]
+    public bool recenterFacingOnLoad = true;
     [Tooltip("Frames to wait after load for XR tracking to report a real camera pose before recentering.")]
     public int  recenterDelayFrames = 3;
 
     private XROrigin _origin;
     private Vector3  _spawn;
+    private Vector3  _spawnForward;   // the rig's authored forward (the room's content direction)
 
     // ── Self-install: runs once on load, then for every scene ──────────────────
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -69,8 +73,9 @@ public class PlayerSpawnGuard : MonoBehaviour
 
     private void Awake()
     {
-        _origin = GetComponent<XROrigin>();
-        _spawn  = transform.position;   // the rig's authored spawn position
+        _origin       = GetComponent<XROrigin>();
+        _spawn        = transform.position;   // the rig's authored spawn position
+        _spawnForward = transform.forward;    // the direction the room was built to be faced from
     }
 
     // One-shot recenter on (every) scene load: slide the play space so the camera sits at the
@@ -87,11 +92,26 @@ public class PlayerSpawnGuard : MonoBehaviour
         for (int i = 0; i < Mathf.Max(1, recenterDelayFrames); i++) yield return null;
         if (_origin == null || _origin.Camera == null) yield break;
 
-        // XZ-only, translation-only (height untouched → can't reintroduce the floor-sink, and no
-        // rotation → head tracking is never fought). Same primitive the fall-recovery uses.
+        // XZ-only translation (height untouched → can't reintroduce the floor-sink). Same
+        // primitive the fall-recovery uses.
         Vector3 cam = _origin.Camera.transform.position;
         _origin.MoveCameraToWorldLocation(new Vector3(_spawn.x, cam.y, _spawn.z));
-        Debug.Log("[PlayerSpawnGuard] Recentered play space to authored spawn on scene load.");
+
+        // ONE-SHOT yaw so the player faces the room's content (panels/puzzle) at the start,
+        // whichever way the headset happened to boot facing. This rotates the rig around the
+        // camera (camera position unchanged) exactly once — it never fights head tracking the
+        // way a per-frame recenter would.
+        if (recenterFacingOnLoad)
+        {
+            Vector3 camFwd = _origin.Camera.transform.forward; camFwd.y = 0f;
+            Vector3 target = _spawnForward;                    target.y = 0f;
+            if (camFwd.sqrMagnitude > 1e-4f && target.sqrMagnitude > 1e-4f)
+            {
+                float yaw = Vector3.SignedAngle(camFwd.normalized, target.normalized, Vector3.up);
+                _origin.RotateAroundCameraUsingOriginUp(yaw);
+            }
+        }
+        Debug.Log("[PlayerSpawnGuard] Recentered play space (position + facing) on scene load.");
     }
 
     private void LateUpdate()

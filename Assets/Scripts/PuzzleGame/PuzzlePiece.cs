@@ -244,15 +244,23 @@ public class PuzzlePiece : MonoBehaviour
         // can nest the remaining pieces flush against the assembly instead of being blocked.
         foreach (var col in GetComponentsInChildren<Collider>()) col.enabled = false;
 
-        // Placed pieces go grey (coloured = still to place). Use the assigned solvedMaterial if
-        // there is one, otherwise just tint this piece's own material grey so prefab pieces don't
-        // need a dedicated material.
-        if (solvedMaterial != null && _renderer != null)
-            _renderer.material = solvedMaterial;
-        else if (_matInstance != null)
+        // Placed pieces go grey and STAY VISIBLE (coloured = still to place). Apply to EVERY
+        // renderer because a prefab piece can be several child meshes — tinting only the first
+        // left the rest coloured and could make the piece look like it "vanished" into the build.
+        foreach (var r in GetComponentsInChildren<Renderer>())
         {
-            _matInstance.SetColor("_EmissionColor", Color.black);
-            _matInstance.color = k_PlacedGrey;
+            if (r == null) continue;
+            r.enabled = true;                       // never let a correctly-placed piece disappear
+            if (solvedMaterial != null)
+            {
+                r.material = solvedMaterial;
+            }
+            else
+            {
+                var m = r.material;
+                m.SetColor("_EmissionColor", Color.black);
+                m.color = k_PlacedGrey;
+            }
         }
 
         Debug.Log($"[PuzzlePiece] '{name}' solved!");

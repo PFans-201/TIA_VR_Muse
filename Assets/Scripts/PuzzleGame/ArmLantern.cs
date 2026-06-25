@@ -24,9 +24,9 @@ public class ArmLantern : MonoBehaviour
 
     [Header("Stress-reactive cone")]
     [Tooltip("Spot angle (deg) when the player is calm — a tight, focused cone that doesn't wash the room.")]
-    public float baseSpotAngle = 34f;
-    [Tooltip("Spot angle (deg) when the player is very stressed — a wider, easier-to-search cone.")]
-    public float maxSpotAngle = 60f;
+    public float baseSpotAngle = 26f;
+    [Tooltip("Spot angle (deg) when the player is very stressed — a bit wider, slightly easier to search.")]
+    public float maxSpotAngle = 42f;
 
     private XRGrabInteractable _grab;
     private Rigidbody _rb;

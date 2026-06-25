@@ -47,6 +47,14 @@ public static class PuzzleSceneBuilder
     private const string k_RobotPrefabMedium = "Assets/Prefabs/PuzzleGame/RobotModel_Medium.prefab";
     private const string k_RobotPrefabHard   = "Assets/Prefabs/PuzzleGame/RobotModel_Hard.prefab";
 
+    // Optional hand-authored Hard-mode obstacle field. If this prefab is present, its children
+    // ARE the Hard obstacles (the procedural walls/columns/baskets below are skipped). Author it
+    // in the obstacle-authoring sandbox (Puzzle Game ▸ Obstacle Authoring), where it seeds from
+    // the current layout so you can drag each piece by hand. The robot is never baked in here —
+    // only the obstacle root is saved — so this stays purely the obstacle layout.
+    private const string k_ObstaclePrefab    = "Assets/Prefabs/PuzzleGame/HardObstacles.prefab";
+    private const string k_ObstacleAuthScene = "Assets/Scenes/_ObstacleAuthoring.unity";
+
     // Redesigned 3-scene session flow (Intro → Tutorial → Game).
     private const string k_IntroScene   = "Assets/Scenes/01_Intro.unity";
     private const string k_Tut2Scene    = "Assets/Scenes/02_Tutorial.unity";
@@ -945,7 +953,7 @@ public static class PuzzleSceneBuilder
         // ── Systems ───────────────────────────────────────────────────────
         var colaGO = new GameObject("CognitiveLoadAdapter");
         var cola   = colaGO.AddComponent<CognitiveLoadAdapter>();
-        cola.hintThreshold = 0.55f;   // colour hints appear at moderate stress
+        cola.hintThreshold = 0.68f;   // Muse colour hints only on clear above-baseline stress (0.5 = baseline)
 
         // Muse S Athena BrainFlow adapter — feeds SetStressLevel() from real EEG.
         // Set macAddress in the Inspector before entering Play Mode.
@@ -1321,6 +1329,21 @@ public static class PuzzleSceneBuilder
         husk.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
         husk.transform.localScale = Vector3.one;
 
+        // Lift the WHOLE robot so its lowest point sits just ABOVE the puzzle table instead of
+        // intersecting it — fixes pieces that solved partly inside the central block/pedestal.
+        // (The pieces' solved positions are read below, after this lift, so the entire assembly
+        // and all its snap zones move up together.)
+        const float k_TableTopY = 1.0f;    // PuzzleTable top surface (box at y=0.5, height 1.0)
+        const float k_Clearance = 0.06f;
+        var huskRends = husk.GetComponentsInChildren<Renderer>(true);
+        if (huskRends.Length > 0)
+        {
+            Bounds b = huskRends[0].bounds;
+            for (int i = 1; i < huskRends.Length; i++) b.Encapsulate(huskRends[i].bounds);
+            float lift = (k_TableTopY + k_Clearance) - b.min.y;
+            if (lift > 0f) husk.transform.position += Vector3.up * lift;
+        }
+
         // Direct children = pieces, ordered by numeric name prefix for the difficulty ramp.
         var children = new List<Transform>();
         foreach (Transform c in husk.transform) children.Add(c);
@@ -1434,7 +1457,7 @@ public static class PuzzleSceneBuilder
 
         var pp = piece.AddComponent<PuzzlePiece>();
         pp.solveThreshold = 0.05f;
-        pp.solvedMaterial = GetOrCreateMat("Piece_Solved", new Color(0.98f, 0.94f, 0.80f));
+        pp.solvedMaterial = GetOrCreateMat("Piece_PlacedGrey", new Color(0.55f, 0.55f, 0.57f));
 
         // ── Wire the snap zone ──────────────────────────────────────────────
         var msz = snapGO.AddComponent<MagneticSnapZone>();
@@ -1489,7 +1512,7 @@ public static class PuzzleSceneBuilder
 
         var pp = go.AddComponent<PuzzlePiece>();
         pp.solveThreshold = 0.05f;
-        pp.solvedMaterial = GetOrCreateMat("Piece_Solved", new Color(0.98f, 0.94f, 0.80f));
+        pp.solvedMaterial = GetOrCreateMat("Piece_PlacedGrey", new Color(0.55f, 0.55f, 0.57f));
 
         // ── Snap zone ─────────────────────────────────────────────────────
         var snapGO = new GameObject($"SnapZone_{pieceName}");
@@ -1759,53 +1782,68 @@ public static class PuzzleSceneBuilder
     /// inactive; HardModeDarkroom enables it only on Hard. See [[ArmLantern]].
     private static GameObject BuildLantern(Vector3 pos)
     {
-        var go = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-        go.name = "Lantern";
-        go.transform.position   = pos;
-        go.transform.localScale = new Vector3(0.08f, 0.10f, 0.08f);
-        // Emissive body so the lantern glows and reads as a light source in the dark.
-        go.GetComponent<Renderer>().material =
-            GetOrCreateEmissiveMat("Lantern", new Color(1f, 0.82f, 0.40f), 2.5f);
+        // Root = empty container so the body AND beam both run along the lantern's local +Z — which
+        // becomes the forearm's pointing direction once attached. (A bare cylinder's length is its
+        // local Y, which would sit perpendicular to the arm — the cause of the "rotated 90°" look.)
+        var go = new GameObject("Lantern");
+        go.transform.position = pos;
 
-        // Hover in place until grabbed — with gravity it would fall to the floor and roll away
-        // in the pitch-dark room, making it impossible to find. Kinematic keeps it floating and
-        // reachable; ArmLantern parents it to the arm on grab anyway.
+        // Visible torch body: a thin cylinder rotated so its length lies ALONG +Z, sitting just
+        // ahead of the wrist like a flashlight the player points down their arm.
+        var body = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        body.name = "LanternBody";
+        body.transform.SetParent(go.transform, false);
+        body.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);    // cylinder length → +Z
+        body.transform.localPosition = new Vector3(0f, 0f, 0.06f);
+        body.transform.localScale    = new Vector3(0.07f, 0.10f, 0.07f); // ~0.20 m long, ~0.07 thick
+        body.GetComponent<Renderer>().material =
+            GetOrCreateEmissiveMat("Lantern", new Color(1f, 0.82f, 0.40f), 2.5f);
+        Object.DestroyImmediate(body.GetComponent<Collider>());          // grab collider is on the root
+
+        // Grab collider on the root, aligned with the body (Z axis).
+        var cap = go.AddComponent<CapsuleCollider>();
+        cap.direction = 2;            // Z
+        cap.radius    = 0.06f;
+        cap.height    = 0.26f;
+        cap.center    = new Vector3(0f, 0f, 0.06f);
+
+        // Hover in place until grabbed (kinematic, no gravity) so it can't roll away in the dark.
         var lrb = go.AddComponent<Rigidbody>();
         lrb.mass        = 0.3f;
         lrb.useGravity  = false;
         lrb.isKinematic = true;
         go.AddComponent<XRGrabInteractable>();
 
-        // Glow that travels with the lantern: a real pool of light around the player's hand
-        // so grabbing it visibly lights their surroundings (and the lantern is easy to find
-        // before grabbing). Reflections are off in dark mode, so it stays a local pool.
+        // Small local pool of light around the hand so the lantern is findable before grabbing.
+        // Kept modest so it doesn't, by itself, light the room.
         var glowGO = new GameObject("LanternGlow");
         glowGO.transform.SetParent(go.transform, false);
         var glow = glowGO.AddComponent<Light>();
         glow.type      = LightType.Point;
         glow.color     = new Color(1f, 0.85f, 0.55f);
-        glow.intensity = 2.4f;
-        glow.range     = 3.8f;
+        glow.intensity = 1.5f;
+        glow.range     = 2.4f;
         glow.shadows   = LightShadows.None;
 
-        // Beam — OFF until grabbed (ArmLantern enables it). Aims along the lantern's local
-        // forward, which becomes the arm direction once clipped to the forearm. Bright and
-        // wide so it clearly reveals surfaces it sweeps across.
+        // Beam — OFF until grabbed (ArmLantern enables it). Aims along the root +Z = the body /
+        // forearm direction. Tight and short so it reveals only what the player points at, instead
+        // of washing the whole room (which made finding pieces too easy).
         var spotGO = new GameObject("LanternSpot");
         spotGO.transform.SetParent(go.transform, false);
+        spotGO.transform.localPosition = new Vector3(0f, 0f, 0.10f);
         var spot = spotGO.AddComponent<Light>();
         spot.type      = LightType.Spot;
         spot.color     = new Color(1f, 0.93f, 0.75f);
-        spot.intensity = 8f;
-        spot.range     = 10f;       // shorter throw → less wash on the far walls
-        spot.spotAngle = 34f;       // tight, focused cone (was 55 — it spread too much)
+        spot.intensity = 6.5f;
+        spot.range     = 7f;
+        spot.spotAngle = 26f;       // tight focused cone
         spot.shadows   = LightShadows.None;
         spot.enabled   = false;
 
         var lantern = go.AddComponent<ArmLantern>();
         lantern.beam          = spot;
-        lantern.baseSpotAngle = 34f;   // calm — a focused beam, not a floodlight
-        lantern.maxSpotAngle  = 60f;   // very stressed → wider, easier search
+        lantern.baseSpotAngle = 26f;   // calm — a focused beam, not a floodlight
+        lantern.maxSpotAngle  = 42f;   // very stressed → a bit wider, slightly easier search
         go.SetActive(false);
         return go;
     }
