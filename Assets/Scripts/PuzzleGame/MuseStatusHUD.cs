@@ -8,10 +8,13 @@ using TMPro;
 /// Drop on any GameObject in the scene (it creates its own World Space canvas
 /// as a child of Camera.main at runtime, so no manual scene wiring needed).
 ///
-/// Shows:
+/// Phase-aware — it shows different data while calibrating vs while playing:
 ///   • Connection status dot  (orange=scanning, yellow=connecting, green=streaming, red=error)
-///   • Scrolling graph        (green=stress 0-1, blue=theta-Z ±3σ, orange=alpha-Z ±3σ)
-///   • Live numeric readout   (stress, thetaZ, alphaZ, CLI, active channels)
+///   • During the BASELINES    raw band-power bars (δ θ α β γ) + signal-quality, since there are
+///                             no standardized indices yet (it's still measuring the reference).
+///   • During GAMEPLAY         the three standardized 0–1 indices: stress, cognitive load,
+///                             attention (scrolling graph + numeric readout). Raw z-scores are
+///                             intentionally not surfaced here.
 ///
 /// Position: inspector field hudPosition (local camera coords, default bottom-right).
 public class MuseStatusHUD : MonoBehaviour
@@ -35,19 +38,25 @@ public class MuseStatusHUD : MonoBehaviour
     private const int GraphW  = 454;
     private const int GraphH  = 90;
 
-    // ── Ring buffers for the graph ────────────────────────────────────────────
+    // ── Ring buffers for the gameplay graph (the three standardized 0–1 indices) ──
     private readonly float[] _sBuf = new float[GraphW];  // stress
-    private readonly float[] _tBuf = new float[GraphW];  // theta-Z normalised
-    private readonly float[] _aBuf = new float[GraphW];  // alpha-Z normalised
+    private readonly float[] _cBuf = new float[GraphW];  // cognitive load
+    private readonly float[] _aBuf = new float[GraphW];  // attention
     private int   _head;
     private float _sampleTimer;
     private bool  _hasData;
     private int   _buildRetries;
     private const int MaxBuildRetries = 10;  // 10 × 0.5s = 5s max wait for Camera.main
 
+    // Baseline (calibration) state — no standardized indices yet, so we show live raw bands.
+    private bool _baselineMode;
+    private readonly float[] _bandsDisp = new float[5];   // δ θ α β γ raw band powers
+    private static readonly string[] k_BandNames = { "δ", "θ", "α", "β", "γ" };
+
     // ── UI refs ───────────────────────────────────────────────────────────────
     private TextMeshProUGUI _statusLabel;
     private TextMeshProUGUI _valuesLabel;
+    private TextMeshProUGUI _legendLabel;
     private RawImage        _graphImg;
     private Texture2D       _tex;
 
@@ -55,8 +64,9 @@ public class MuseStatusHUD : MonoBehaviour
     static readonly Color32 CBack   = new Color32( 10,  12,  20, 235);
     static readonly Color32 CGrid   = new Color32( 70,  75,  95,  45);
     static readonly Color32 CGreen  = new Color32( 48, 210,  88, 255);   // stress
-    static readonly Color32 CBlue   = new Color32( 72, 158, 255, 255);   // theta
-    static readonly Color32 COrange = new Color32(255, 148,  38, 255);   // alpha
+    static readonly Color32 COrange = new Color32(255, 148,  38, 255);   // cognitive load
+    static readonly Color32 CBlue   = new Color32( 72, 158, 255, 255);   // attention
+    static readonly Color32 CBand   = new Color32(120, 200, 160, 255);   // baseline band bars
 
     const string HexScan  = "#FF8020";
     const string HexConn  = "#FFD91A";
@@ -134,10 +144,15 @@ public class MuseStatusHUD : MonoBehaviour
                  status.Contains("Error") || status.Contains("failed"))              hex = HexErr;
         else                                                                         hex = HexScan;
 
-        string extra = status.Contains("streaming")
-            ? $"   stress: <b>{stressLevel:F3}</b>   " +
-              $"contact: {(contact ? $"<color={HexOK}><b>✓</b></color>" : $"<color={HexErr}><b>✗</b></color>")}"
-            : string.Empty;
+        // While calibrating, don't show the placeholder stress (it's a constant 0.5) — say so.
+        bool baseline = useUdp && udp.IsBaselinePhase;
+        string extra;
+        if (baseline)
+            extra = $"   <color={HexConn}>calibrating baseline…</color>";
+        else if (status.Contains("streaming"))
+            extra = $"   contact: {(contact ? $"<color={HexOK}><b>✓</b></color>" : $"<color={HexErr}><b>✗</b></color>")}";
+        else
+            extra = string.Empty;
 
         _statusLabel.text = $"<color={hex}>●</color>  {status}{extra}";
     }
@@ -147,41 +162,61 @@ public class MuseStatusHUD : MonoBehaviour
     {
         var mda = MuseDirectAdapter.Instance;
         var udp = MuseUdpAdapter.Instance;
-
-        float stress, thetaZ, alphaZ, cli;
-        string channels;
-
         bool useUdp = udp != null && (udp.Receiving || mda == null);
 
+        // ── Baseline calibration: no standardized indices yet → show live raw bands ──
+        _baselineMode = useUdp && udp.IsBaselinePhase;
+        if (_baselineMode)
+        {
+            var b = udp.Bands;
+            for (int i = 0; i < 5; i++) _bandsDisp[i] = (b != null && i < b.Length) ? b[i] : 0f;
+            _hasData = true;
+
+            if (_valuesLabel != null)
+            {
+                bool contact = udp.Contact;
+                _valuesLabel.text =
+                    $"<color={HexConn}>calibrating…</color>  measuring your baseline    " +
+                    $"signal: {(contact ? $"<color={HexOK}><b>good ✓</b></color>" : $"<color={HexErr}><b>poor ✗</b></color>")}";
+            }
+            if (_legendLabel != null)
+                _legendLabel.text =
+                    $"<color=#78C8A0>■</color> live brain-wave bands (δ θ α β γ) — stay still and relaxed";
+            return;
+        }
+
+        // ── Gameplay streaming: the three standardized 0–1 indices ──
+        float stress, cog, att;
+        bool haveIndices;
         if (useUdp)
         {
-            stress = udp.StressLevel; thetaZ = udp.ThetaZ; alphaZ = udp.AlphaZ;
-            cli = udp.Cli; channels = udp.Receiving ? "WiFi" : "—";
+            stress = udp.StressLevel; cog = udp.CognitiveLoad; att = udp.Attention; haveIndices = true;
         }
         else if (mda != null)
         {
-            var r = mda.LastReading;
-            stress = r.stress; thetaZ = r.thetaZ; alphaZ = r.alphaZ;
-            cli = r.cli; channels = r.usedChannels;
+            stress = mda.LastReading.stress; cog = 0f; att = 0f; haveIndices = false;   // on-device: stress only
         }
         else return;
 
         _sBuf[_head] = stress;
-        _tBuf[_head] = Mathf.InverseLerp(-3f, 3f, thetaZ);  // ±3σ → 0–1
-        _aBuf[_head] = Mathf.InverseLerp(-3f, 3f, alphaZ);
+        _cBuf[_head] = cog;
+        _aBuf[_head] = att;
         _head = (_head + 1) % GraphW;
         _hasData = true;
 
-        // Numeric readout
         if (_valuesLabel != null)
         {
-            _valuesLabel.text =
-                $"<color={HexOK}>stress {stress:F3}</color>    " +
-                $"<color=#50A0FF>θz {thetaZ:+0.00;-0.00;+0.00}</color>    " +
-                $"<color=#FF9628>αz {alphaZ:+0.00;-0.00;+0.00}</color>    " +
-                $"CLI {cli:+0.00;-0.00;+0.00}    " +
-                $"ch: <b>{(string.IsNullOrEmpty(channels) ? "—" : channels)}</b>";
+            _valuesLabel.text = haveIndices
+                ? $"<color={HexOK}>stress {stress:F2}</color>     " +
+                  $"<color=#FF9426>cognitive load {cog:F2}</color>     " +
+                  $"<color=#489EFF>attention {att:F2}</color>"
+                : $"<color={HexOK}>stress {stress:F2}</color>     (on-device: stress only)";
         }
+        if (_legendLabel != null)
+            _legendLabel.text = haveIndices
+                ? $"<color={HexOK}>■</color> Stress    <color=#FF9426>■</color> Cognitive load    " +
+                  $"<color=#489EFF>■</color> Attention    grid = 30 s  (0–1)"
+                : $"<color={HexOK}>■</color> Stress (0–1)    grid = 30 s";
     }
 
     // ── Graph redraw ──────────────────────────────────────────────────────────
@@ -190,28 +225,51 @@ public class MuseStatusHUD : MonoBehaviour
         if (!_hasData) return;
 
         var px = _tex.GetPixels32();
-
-        // Background
         for (int i = 0; i < px.Length; i++) px[i] = CBack;
 
-        // Horizontal grid lines at 0.25, 0.5, 0.75
-        foreach (float f in new float[] { 0.25f, 0.5f, 0.75f })
+        if (_baselineMode) { RedrawBars(px); }
+        else
         {
-            int gy = Mathf.RoundToInt(f * (GraphH - 1));
-            for (int x = 0; x < GraphW; x++) px[gy * GraphW + x] = CGrid;
+            // Horizontal grid lines at 0.25, 0.5, 0.75
+            foreach (float f in new float[] { 0.25f, 0.5f, 0.75f })
+            {
+                int gy = Mathf.RoundToInt(f * (GraphH - 1));
+                for (int x = 0; x < GraphW; x++) px[gy * GraphW + x] = CGrid;
+            }
+            // Vertical grid every 60 samples  (60 × 0.5 s = 30 s intervals)
+            for (int x = 0; x < GraphW; x += 60)
+                for (int y = 0; y < GraphH; y++) px[y * GraphW + x] = CGrid;
+
+            // Plot the three indices (back to front so stress reads on top)
+            PlotLine(px, _aBuf, CBlue);     // attention
+            PlotLine(px, _cBuf, COrange);   // cognitive load
+            PlotLine(px, _sBuf, CGreen);    // stress
         }
-
-        // Vertical grid every 60 samples  (60 × 0.5 s = 30 s intervals)
-        for (int x = 0; x < GraphW; x += 60)
-            for (int y = 0; y < GraphH; y++) px[y * GraphW + x] = CGrid;
-
-        // Plot lines (back to front so stress is on top)
-        PlotLine(px, _tBuf, CBlue);
-        PlotLine(px, _aBuf, COrange);
-        PlotLine(px, _sBuf, CGreen);
 
         _tex.SetPixels32(px);
         _tex.Apply();
+    }
+
+    // ── Baseline band bars ──────────────────────────────────────────────────────
+    /// Draws the five raw band powers (δ θ α β γ) as live bars, each normalised to the loudest
+    /// band so the display clearly shows brain-wave activity (and is flat when there's no signal).
+    void RedrawBars(Color32[] px)
+    {
+        float max = 1e-6f;
+        for (int i = 0; i < 5; i++) max = Mathf.Max(max, _bandsDisp[i]);
+
+        const int n = 5;
+        int gap   = 6;
+        int barW  = (GraphW - gap * (n + 1)) / n;
+        for (int bi = 0; bi < n; bi++)
+        {
+            float norm = Mathf.Clamp01(_bandsDisp[bi] / max);
+            int   h    = Mathf.RoundToInt(norm * (GraphH - 2));
+            int   x0   = gap + bi * (barW + gap);
+            for (int x = x0; x < x0 + barW && x < GraphW; x++)
+                for (int y = 0; y < h; y++)
+                    px[y * GraphW + x] = CBand;
+        }
     }
 
     void PlotLine(Color32[] px, float[] buf, Color32 col)
@@ -334,17 +392,15 @@ public class MuseStatusHUD : MonoBehaviour
         // ── Legend ────────────────────────────────────────────────────────
         var legRT = MakeRect(panel, "Legend");
         Pin(legRT, 8, 12, PanelW - 16, 16);
-        var legTxt = AddTMP(legRT, "LegendText");
-        Stretch(legTxt.GetComponent<RectTransform>());
-        legTxt.text =
-            $"<color={HexOK}>■</color> Stress (0–1)    " +
-            "<color=#50A0FF>■</color> Theta-Z (±3σ)    " +
-            "<color=#FF9628>■</color> Alpha-Z (±3σ)    " +
-            "grid = 30 s";
-        legTxt.fontSize  = 8f;
-        legTxt.color     = new Color(0.65f, 0.68f, 0.75f, 1f);
-        legTxt.alignment = TextAlignmentOptions.Center;
-        legTxt.textWrappingMode = TextWrappingModes.NoWrap;
+        _legendLabel = AddTMP(legRT, "LegendText");
+        Stretch(_legendLabel.GetComponent<RectTransform>());
+        _legendLabel.text =                   // replaced live by AddSample once data arrives
+            $"<color={HexOK}>■</color> Stress    <color=#FF9426>■</color> Cognitive load    " +
+            "<color=#489EFF>■</color> Attention    grid = 30 s  (0–1)";
+        _legendLabel.fontSize  = 8f;
+        _legendLabel.color     = new Color(0.65f, 0.68f, 0.75f, 1f);
+        _legendLabel.alignment = TextAlignmentOptions.Center;
+        _legendLabel.textWrappingMode = TextWrappingModes.NoWrap;
     }
 
     // ── Layout helpers ────────────────────────────────────────────────────────

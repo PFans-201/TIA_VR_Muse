@@ -58,11 +58,22 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
     public float  StressLevel => _stress;
     public string Phase       => _phase;
     public bool   Receiving   => _secondsSinceLastPacket < 5f;
+    public bool   Contact     => _contact;
     public string Status      => _status;
-    
+
+    // Standardized 0–1 indices (sent only while streaming gameplay; 0 during baselines).
     public float ThetaZ { get; private set; }
     public float AlphaZ { get; private set; }
     public float Cli { get; private set; }
+    public float Attention     { get; private set; }
+    public float CognitiveLoad { get; private set; }
+
+    // Raw band powers δ,θ,α,β,γ in µV² (sent during idle/baseline so the HUD can show live
+    // signal while there are no standardized indices yet; 0 while streaming gameplay).
+    private readonly float[] _bands = new float[5];
+    public float[] Bands => _bands;
+    /// True while the bridge is in a baseline phase (rest or active-VR calibration).
+    public bool IsBaselinePhase => _phase != null && _phase.Contains("baseline");
 
     private UdpClient _udp;
     private UdpClient _ctrlSender;
@@ -150,9 +161,16 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
         public float theta_z;
         public float alpha_z;
         public float cli;
+        public float attention;
+        public float cognitive_load;
+        // Raw band powers (sent during idle/baseline). Absent fields stay 0 — JsonUtility ignores
+        // unknown JSON fields and leaves undeclared/absent ones at their default.
+        public float delta;
+        public float theta;
+        public float alpha;
+        public float beta;
+        public float gamma;
         public bool contact;
-        // 'bands' and 'progress' are intentionally omitted — JsonUtility ignores
-        // unknown JSON fields, so we only declare what we consume.
     }
 
     [Serializable]
@@ -229,10 +247,15 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
             _stress  = Mathf.Clamp01(r.stress);
             _phase   = string.IsNullOrEmpty(r.phase) ? _phase : r.phase;
             _contact = r.contact;
-            
-            ThetaZ = r.theta_z;
-            AlphaZ = r.alpha_z;
-            Cli = r.cli;
+
+            ThetaZ        = r.theta_z;
+            AlphaZ        = r.alpha_z;
+            Cli           = r.cli;
+            Attention     = r.attention;
+            CognitiveLoad = r.cognitive_load;
+
+            _bands[0] = r.delta; _bands[1] = r.theta; _bands[2] = r.alpha;
+            _bands[3] = r.beta;  _bands[4] = r.gamma;
         }
 
         if (got)

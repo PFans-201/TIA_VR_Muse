@@ -109,37 +109,19 @@ public static class PuzzleSceneBuilder
                   "Switch platform to Android, then Build And Run.");
     }
 
-    /// Just the VR UI input fix across all scenes (useful for any VR build, not only
-    /// the Quest direct-BLE path).
-    [MenuItem("Puzzle Game/Fix VR UI Input (all scenes)")]
-    public static void FixVRUIInputAllScenes()
+    /// Adds the head-locked Muse status HUD to the open scene if absent. The HUD is now baked
+    /// into every session-flow scene at build time, so this is just the per-scene helper.
+    private static void AddMuseStatusHud()
     {
-        ForEachScene(k_AllScenes, () => $"VR-UI raycasters +{ApplyVRUIFix()}");
-        Debug.Log("[PuzzleSceneBuilder] VR UI input fixed in all scenes. " +
-                  "Ensure the XR rig's ray interactor has 'UI Interaction' enabled.");
-    }
-
-    /// Adds the head-locked Muse connection/stress debug HUD to every scene (on-device
-    /// testing without a PC). Remove before release.
-    [MenuItem("Puzzle Game/Add Muse Status HUD (all scenes)")]
-    public static void AddMuseStatusHudAllScenes()
-    {
-        ForEachScene(k_AllScenes, () =>
-        {
-            if (Object.FindFirstObjectByType<MuseStatusHUD>() != null) return "already present";
+        if (Object.FindFirstObjectByType<MuseStatusHUD>(FindObjectsInactive.Include) == null)
             new GameObject("MuseStatusHUD").AddComponent<MuseStatusHUD>();
-            return "HUD added";
-        });
-        Debug.Log("[PuzzleSceneBuilder] Muse status HUD added to all scenes.");
     }
 
-    /// Adds the XR Device Simulator to every scene so you can drive the headset +
-    /// controllers (and GRAB objects / click UI) with mouse + keyboard in the Editor,
-    /// no headset needed. It is wrapped in EditorOnlyObject so it self-destroys in Quest
-    /// builds. In Play mode: move the mouse to look; hold L/R controller keys (see the
-    /// XR Device Simulator docs / on-screen hints) and click to grip/select.
-    [MenuItem("Puzzle Game/Add XR Device Simulator (all scenes, Editor test)")]
-    public static void AddXRDeviceSimulatorAllScenes()
+    /// (internal helper) Adds the XR Device Simulator to every scene so you can drive the headset
+    /// + controllers (and GRAB objects / click UI) with mouse + keyboard in the Editor, no headset
+    /// needed. Wrapped in EditorOnlyObject so it self-destroys in Quest builds. Invoked by the
+    /// "Prepare for PC Debug" menu.
+    private static void AddXRDeviceSimulatorAllScenes()
     {
         // Use the fully-wired sample prefab (it carries the required Action Assets — a
         // bare XRDeviceSimulator component has none and just warns).
@@ -172,9 +154,16 @@ public static class PuzzleSceneBuilder
     ///   02_Tutorial — control practice + interaction baseline (min 40 s) + Continue
     ///   03_Game     — difficulty selection (with Muse recommendation) + puzzle
     /// The Game scene is derived from ZenPuzzleRoom, so build that first (Build All Scenes).
-    /// On-device BLE variant of the session-flow build (no PC bridge — the Quest connects to the
-    /// Muse over BLE itself). The default menu below builds the WiFi UDP-bridge variant.
-    [MenuItem("Puzzle Game/Build Session Flow Scenes (on-device BLE)")]
+    /// ONE-CLICK prep for the APK (WiFi UDP-bridge EEG path — the default deployment). Rebuilds
+    /// the 3 session-flow scenes (Intro → Tutorial → Game), applies the VR-UI fix, wires the UDP
+    /// EEG source and bakes the Muse status HUD into each scene. Run this after changing code,
+    /// just before File ▸ Build And Run.
+    [MenuItem("Puzzle Game/Prepare for APK Build — UDP bridge (default)", priority = 0)]
+    public static void PrepareForApkBuild() => BuildSessionFlowScenes();
+
+    /// APK prep for the on-device BLE path (no PC bridge — the Quest connects to the Muse itself).
+    /// Same scenes, but the baked EEG source is direct BLE instead of the UDP bridge.
+    [MenuItem("Puzzle Game/Prepare for APK Build — on-device BLE", priority = 1)]
     public static void BuildSessionFlowScenesBle()
     {
         s_useUdpBridge = false;
@@ -182,7 +171,18 @@ public static class PuzzleSceneBuilder
         finally { s_useUdpBridge = true; }   // restore the UDP default
     }
 
-    [MenuItem("Puzzle Game/Build Session Flow Scenes (Intro-Tutorial-Game, UDP bridge)")]
+    /// Prep for Editor testing with mouse + keyboard: builds the UDP scenes, then drops in the
+    /// XR Device Simulator (Editor-only, self-destroys in Quest builds) so you can drive the rig
+    /// without a headset. Enter Play mode after running this.
+    [MenuItem("Puzzle Game/Prepare for PC Debug (XR Simulator)", priority = 2)]
+    public static void PrepareForPcDebug()
+    {
+        BuildSessionFlowScenes();
+        AddXRDeviceSimulatorAllScenes();
+        Debug.Log("[PuzzleSceneBuilder] PC-debug prep done — enter Play mode to drive the rig with mouse/keyboard.");
+    }
+
+    // Worker for the prep menus above (UDP by default; the BLE menu flips s_useUdpBridge).
     public static void BuildSessionFlowScenes()
     {
         if (BlockedByPlayMode()) return;
@@ -240,6 +240,7 @@ public static class PuzzleSceneBuilder
         intro.restSeconds = 20f;
         BuildIntroUI(intro, new Vector3(0f, 1.6f, 1.6f));
 
+        AddMuseStatusHud();   // phase-aware Muse HUD (raw signal during baseline, indices in game)
         ApplyVRUIFix();
         EditorSceneManager.SaveScene(scene, k_IntroScene);
         Debug.Log($"[PuzzleSceneBuilder] Saved {k_IntroScene}");
@@ -328,6 +329,7 @@ public static class PuzzleSceneBuilder
         tut.minSeconds = 40f;
         BuildTutorialFlowUI(tut, new Vector3(0f, 1.8f, 2.8f));
 
+        AddMuseStatusHud();   // phase-aware Muse HUD (raw signal during baseline, indices in game)
         ApplyVRUIFix();
         EditorSceneManager.SaveScene(scene, k_Tut2Scene);
         Debug.Log($"[PuzzleSceneBuilder] Saved {k_Tut2Scene}");
@@ -938,6 +940,7 @@ public static class PuzzleSceneBuilder
 
         // ── Adaptive-event HUD: shows each adaptive action + its trigger (Muse vs behaviour) ──
         new GameObject("AdaptiveEventHUD").AddComponent<AdaptiveEventHUD>();
+        AddMuseStatusHud();   // phase-aware Muse HUD (indices during gameplay)
 
         EditorSceneManager.SaveScene(scene, k_ZenScene);
         Debug.Log($"[PuzzleSceneBuilder] Saved {k_ZenScene}");

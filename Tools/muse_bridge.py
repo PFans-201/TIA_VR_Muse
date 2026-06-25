@@ -39,6 +39,7 @@ import json
 import math
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -513,12 +514,15 @@ def run_session_unity(args, send, ctrl_sock, recorder=None):
             if state == "rest":
                 for n, v in bp.items():
                     rest[n].append(v)
-                send({"phase": "baseline_rest", "stress": 0.5, "contact": bool(bp)})
+                # Stream the raw band powers during the baseline too — there are no standardized
+                # indices yet (we're still measuring the reference), so the Unity HUD shows live
+                # band activity + contact instead, to confirm the headset is reading well.
+                send({"phase": "baseline_rest", "stress": 0.5, "contact": bool(bp), **bands_mean})
                 record("baseline_rest", bool(bp), list(bp))
             elif state == "active":
                 for n, v in bp.items():
                     active[n].append(v)
-                send({"phase": "baseline_active", "stress": 0.5, "contact": bool(bp)})
+                send({"phase": "baseline_active", "stress": 0.5, "contact": bool(bp), **bands_mean})
                 record("baseline_active", bool(bp), list(bp))
             elif state == "streaming":
                 res = band_zscores(bp, base)
@@ -536,7 +540,7 @@ def run_session_unity(args, send, ctrl_sock, recorder=None):
                 print(f"  stress={idx['stress']:.3f} att={idx['attention']:.3f} "
                       f"cog={idx['cognitive_load']:.3f}  {'+'.join(used)}")
             else:  # idle
-                send({"phase": "idle", "stress": 0.5, "contact": bool(bp)})
+                send({"phase": "idle", "stress": 0.5, "contact": bool(bp), **bands_mean})
                 record("idle", bool(bp), list(bp))
     except KeyboardInterrupt:
         print("\n[INFO] Stopped by user.")
@@ -548,6 +552,25 @@ def run_session_unity(args, send, ctrl_sock, recorder=None):
             pass
         reader.disconnect()
         print("[OK] Disconnected.")
+
+
+def _launch_live_plot(csv_path):
+    """Open Tools/muse_plot.py in --live mode as a separate process so a plot window tracks the
+    session (raw bands + the three indices) in real time. Returns the Popen handle, or None if it
+    couldn't start (e.g. matplotlib not installed) — the bridge keeps running regardless."""
+    try:
+        import importlib.util
+        if importlib.util.find_spec("matplotlib") is None:
+            print("[INFO] matplotlib not installed — skipping live plot "
+                  "(pip install matplotlib numpy, or pass --no-plot to silence).")
+            return None
+        plot_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "muse_plot.py")
+        proc = subprocess.Popen([sys.executable, plot_py, csv_path, "--live", "--bands"])
+        print(f"[INFO] live plot window -> {csv_path}")
+        return proc
+    except Exception as e:
+        print(f"[INFO] could not open live plot ({e}); continuing without it.")
+        return None
 
 
 def main():
@@ -579,6 +602,10 @@ def main():
                     help="Log every tick (phase, band powers, the 3 indices) to a CSV for "
                          "offline/live plotting with Tools/muse_plot.py. Bare --record auto-names "
                          "Tools/sessions/session_<timestamp>.csv.")
+    ap.add_argument("--no-plot", action="store_true",
+                    help="Don't auto-open the live plot window. By default the bridge records the "
+                         "session and opens Tools/muse_plot.py --live so you see the raw bands and "
+                         "the three indices in real time.")
     # Restore real stderr so argparse errors/usage are visible, parse, then re-mute.
     if _SAVED_STDERR_FD is not None:
         os.dup2(_SAVED_STDERR_FD, 2)
@@ -603,15 +630,22 @@ def main():
             sock.sendto((json.dumps(payload) + "\n").encode(),
                         (args.udp_host, args.udp_port))
 
+    # Record the session if --record was given OR if we're going to live-plot (the plot reads the
+    # CSV the recorder writes), so the default `--unity` run both logs and shows a live window.
     recorder = None
-    if args.record is not None:
-        path = args.record
-        if path == "auto":
+    record_path = None
+    if args.record is not None or not args.no_plot:
+        record_path = args.record if (args.record and args.record != "auto") else None
+        if record_path is None:
             sess_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
             os.makedirs(sess_dir, exist_ok=True)
-            path = os.path.join(sess_dir, f"session_{time.strftime('%Y%m%d_%H%M%S')}.csv")
-        recorder = Recorder(path)
-        print(f"[INFO] recording -> {path}")
+            record_path = os.path.join(sess_dir, f"session_{time.strftime('%Y%m%d_%H%M%S')}.csv")
+        recorder = Recorder(record_path)
+        print(f"[INFO] recording -> {record_path}")
+
+    plot_proc = None
+    if not args.no_plot and record_path is not None:
+        plot_proc = _launch_live_plot(record_path)
 
     ctrl_sock = None
     try:
@@ -638,6 +672,11 @@ def main():
                 pass
         if recorder is not None:
             recorder.close()
+        if plot_proc is not None:
+            try:
+                plot_proc.terminate()
+            except Exception:
+                pass
 
     # Exit immediately. The SimpleBLE backend's daemon threads emit harmless D-Bus
     # chatter from C++ static destructors at interpreter shutdown (it caches the
