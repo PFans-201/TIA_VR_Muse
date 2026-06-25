@@ -493,6 +493,7 @@ public static class PuzzleSceneBuilder
         if (BlockedByPlayMode()) return;
         if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
         EnsureFolderPath(k_MatDir);
+        EnsureFolderPath(k_DecorDir);   // where Decoration_<scene>_*.prefab files live
 
         BuildIntroScene();
         BuildTutorialFlowScene();
@@ -529,9 +530,10 @@ public static class PuzzleSceneBuilder
     {
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
         AddRoomLighting(8f, 8f, 3f, new Color(0.50f, 0.50f, 0.52f));
-        AddFloor(Vector3.zero, 8f, 8f, GetOrCreateMat("Floor_Intro", new Color(0.82f, 0.82f, 0.82f)));
-        AddWalls(8f, 8f, 3f, GetOrCreateMat("Wall_Intro", new Color(0.88f, 0.88f, 0.88f)));
-        AddCeiling(8f, 8f, 3f, GetOrCreateMat("Ceiling_Intro", new Color(0.90f, 0.90f, 0.90f)));
+        AddFloor(Vector3.zero, 8f, 8f, FloorMat());
+        AddWalls(8f, 8f, 3f, WallMat());
+        AddCeiling(8f, 8f, 3f, CeilingMat());
+        SpawnDecorations("intro");
 
         SpawnXRRig(new Vector3(0f, 0f, -2.5f), new Vector3(0f, 1.7f, 1.6f));
 
@@ -595,9 +597,10 @@ public static class PuzzleSceneBuilder
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
         AddRoomLighting(8f, 9f, 3f, new Color(0.50f, 0.50f, 0.52f));
         var tableMat = GetOrCreateMat("Table_Tutorial", new Color(0.94f, 0.94f, 0.94f));
-        AddFloor(Vector3.zero, 8f, 9f, GetOrCreateMat("Floor_Tutorial", new Color(0.80f, 0.80f, 0.80f)));
-        AddWalls(8f, 9f, 3f, GetOrCreateMat("Wall_Tutorial", new Color(0.88f, 0.88f, 0.88f)));
-        AddCeiling(8f, 9f, 3f, GetOrCreateMat("Ceiling_Tutorial", new Color(0.90f, 0.90f, 0.90f)));
+        AddFloor(Vector3.zero, 8f, 9f, FloorMat());
+        AddWalls(8f, 9f, 3f, WallMat());
+        AddCeiling(8f, 9f, 3f, CeilingMat());
+        SpawnDecorations("tutorial");
         SpawnXRRig(new Vector3(0f, 0f, -3.5f), new Vector3(0f, 1.4f, 1.8f));
 
         var cola = new GameObject("CognitiveLoadAdapter").AddComponent<CognitiveLoadAdapter>();
@@ -879,9 +882,9 @@ public static class PuzzleSceneBuilder
         AddDirectionalLight(new Color(0.96f, 0.94f, 0.90f), 0.60f, Quaternion.Euler(50f, -20f, 0f));
         SetAmbientFlat(new Color(0.30f, 0.30f, 0.30f));
 
-        // Zen grey materials
-        var floorMat  = GetOrCreateMat("Floor_Entry",  new Color(0.78f, 0.78f, 0.78f));
-        var wallMat   = GetOrCreateMat("Wall_Entry",   new Color(0.84f, 0.84f, 0.84f));
+        // Shared floor/wall materials (same across all scenes)
+        var floorMat  = FloorMat();
+        var wallMat   = WallMat();
         var portalMat = GetOrCreateMat("Portal_Frame", new Color(0.72f, 0.72f, 0.72f));
 
         // 6 × 8 × 3 m room
@@ -922,8 +925,8 @@ public static class PuzzleSceneBuilder
         AddDirectionalLight(new Color(0.97f, 0.96f, 0.93f), 0.70f, Quaternion.Euler(45f, -30f, 0f));
         SetAmbientFlat(new Color(0.38f, 0.38f, 0.38f));
 
-        var floorMat  = GetOrCreateMat("Floor_Tutorial",  new Color(0.80f, 0.80f, 0.80f));
-        var wallMat   = GetOrCreateMat("Wall_Tutorial",   new Color(0.88f, 0.88f, 0.88f));
+        var floorMat  = FloorMat();
+        var wallMat   = WallMat();
         var tableMat  = GetOrCreateMat("Table_Tutorial",  new Color(0.94f, 0.94f, 0.94f));
         var restMat   = GetOrCreateMat("RestZone",        new Color(0.70f, 0.85f, 0.70f));   // soft green circle
         var grabMat0  = GetOrCreateMat("GrabObj_Red",     new Color(0.85f, 0.38f, 0.38f));
@@ -1123,15 +1126,16 @@ public static class PuzzleSceneBuilder
         var litAmbient = new Color(0.50f, 0.50f, 0.52f);
         var roomLights = AddRoomLighting(8f, 8f, 3f, litAmbient);
 
-        // Zen grey materials
-        var floorMat = GetOrCreateMat("Floor_Zen",  new Color(0.82f, 0.82f, 0.82f));
-        var wallMat  = GetOrCreateMat("Wall_Zen",   new Color(0.87f, 0.87f, 0.87f));
+        // Zen grey materials  (floor/wall/ceiling shared across all scenes)
+        var floorMat = FloorMat();
+        var wallMat  = WallMat();
         var tableMat = GetOrCreateMat("Table_Zen",  new Color(0.93f, 0.93f, 0.93f));
 
         // 8 × 8 × 3 m room (roofed so it feels enclosed and contains the pieces)
         AddFloor(Vector3.zero, 8f, 8f, floorMat);
         AddWalls(8f, 8f, 3f, wallMat);
-        AddCeiling(8f, 8f, 3f, GetOrCreateMat("Ceiling_Zen", new Color(0.90f, 0.90f, 0.90f)));
+        AddCeiling(8f, 8f, 3f, CeilingMat());
+        SpawnDecorations("game");
 
         // Central puzzle table  (top surface at y = 1.0)
         AddBox("PuzzleTable", new Vector3(0f, 0.5f, 0f), new Vector3(1.4f, 1.0f, 1.4f), tableMat);
@@ -2218,6 +2222,62 @@ public static class PuzzleSceneBuilder
         btn.targetGraphic = img;
         MakeUIText(go.transform, "Label", label, Vector2.zero, new Vector2(150f, 62f), 24, Color.white);
         return btn;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Shared room-surface materials
+    // ════════════════════════════════════════════════════════════════════════
+    // One Floor.mat / Wall.mat / Ceiling.mat reused by EVERY scene. Drop a hand-authored
+    // material at these paths (e.g. a wood floor) and the builder loads it instead of
+    // generating the flat-colour fallback — your custom material is never overwritten when
+    // scenes are regenerated. The colours below are only used the first time, if no asset exists.
+
+    private static Material FloorMat()   => GetOrCreateMat("Floor",   new Color(0.82f, 0.82f, 0.82f));
+    private static Material WallMat()     => GetOrCreateMat("Wall",    new Color(0.87f, 0.87f, 0.87f));
+    private static Material CeilingMat() => GetOrCreateMat("Ceiling", new Color(0.90f, 0.90f, 0.90f));
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Decoration prefabs (auto-loaded by naming convention)
+    // ════════════════════════════════════════════════════════════════════════
+
+    private const string k_DecorDir = "Assets/Prefabs/Decorations";
+
+    /// Instantiates every decoration prefab in k_DecorDir whose file name starts with
+    /// "Decoration_<sceneKey>" (or "Decoration_all" for props shared by all scenes), at the
+    /// prefab's own saved transform. Curate scene dressing by adding/removing prefab files in
+    /// that folder — no code change needed — and regenerating scenes re-adds them every time, so
+    /// decorations survive the scene wipe. Matching is case-insensitive.
+    ///   e.g. Decoration_intro_Lantern.prefab → spawned in the Intro scene (sceneKey "intro")
+    ///        Decoration_all_Plant.prefab     → spawned in every scene
+    private static int SpawnDecorations(string sceneKey)
+    {
+        if (!AssetDatabase.IsValidFolder(k_DecorDir)) return 0;
+
+        string scenePrefix  = $"Decoration_{sceneKey}";
+        const string shared = "Decoration_all";
+        var parent = new GameObject($"Decorations_{sceneKey}");
+
+        int count = 0;
+        foreach (var guid in AssetDatabase.FindAssets("t:Prefab", new[] { k_DecorDir }))
+        {
+            var path = AssetDatabase.GUIDToAssetPath(guid);
+            var file = System.IO.Path.GetFileNameWithoutExtension(path);
+            bool match = file.StartsWith(scenePrefix, System.StringComparison.OrdinalIgnoreCase)
+                      || file.StartsWith(shared,      System.StringComparison.OrdinalIgnoreCase);
+            if (!match) continue;
+
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+            if (prefab == null) continue;
+
+            // InstantiatePrefab applies the prefab root's own saved position/rotation/scale.
+            var inst = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+            inst.transform.SetParent(parent.transform, worldPositionStays: true);
+            count++;
+        }
+
+        if (count == 0) Object.DestroyImmediate(parent);
+        else Debug.Log($"[PuzzleSceneBuilder] Spawned {count} decoration(s) for '{sceneKey}'.");
+        return count;
     }
 
     // ════════════════════════════════════════════════════════════════════════

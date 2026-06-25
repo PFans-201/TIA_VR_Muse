@@ -101,6 +101,11 @@ public class PuzzleManager : MonoBehaviour
     private int               _solvedCount;
     private DifficultySettings _baselineSettings;   // the settings chosen at StartPuzzle
     private bool              _puzzleStarted;
+    private float            _puzzleStartTime;       // Time.time when the active puzzle began
+
+    /// Wall-clock seconds the most recently completed puzzle took (start → last piece solved).
+    /// Read by PuzzleWinHUD to show the solve time. Zero until the first puzzle is completed.
+    public float LastPuzzleSeconds { get; private set; }
 
     /// True while a dark-room difficulty (Medium / Hard) is active — read by PieceHintSystem.
     public bool IsDarkRoom => _puzzleStarted && _currentDifficulty != DifficultyLevel.Easy;
@@ -178,6 +183,7 @@ public class PuzzleManager : MonoBehaviour
 
         _baselineSettings = s;
         _puzzleStarted    = true;
+        _puzzleStartTime  = Time.time;
 
         var hintPairs = new List<PieceHintSystem.PiecePair>();
 
@@ -327,7 +333,8 @@ public class PuzzleManager : MonoBehaviour
 
     private void OnPuzzleComplete()
     {
-        Debug.Log($"[PuzzleManager] Puzzle complete! (Robot · {_currentDifficulty})");
+        LastPuzzleSeconds = Time.time - _puzzleStartTime;
+        Debug.Log($"[PuzzleManager] Puzzle complete! (Robot · {_currentDifficulty}) in {LastPuzzleSeconds:F1}s");
         // TODO: Trigger celebration FX — confetti particle system, completion sound,
         //       "Well done!" UI panel.
         OnPuzzleCompleted?.Invoke(_currentDifficulty);
