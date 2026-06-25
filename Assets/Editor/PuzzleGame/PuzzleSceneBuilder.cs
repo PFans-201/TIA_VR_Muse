@@ -1421,7 +1421,10 @@ public static class PuzzleSceneBuilder
             }
         }
 
-        var rb = piece.GetComponent<Rigidbody>() ?? piece.AddComponent<Rigidbody>();
+        // Use Unity's overloaded == (not C# ??, which sees a "fake-null" destroyed component as
+        // non-null and then throws MissingComponentException when the field is accessed).
+        var rb = piece.GetComponent<Rigidbody>();
+        if (rb == null) rb = piece.AddComponent<Rigidbody>();
         rb.mass          = 0.3f;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
         rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
