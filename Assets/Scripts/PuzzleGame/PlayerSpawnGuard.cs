@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using Unity.XR.CoreUtils;
@@ -28,6 +29,13 @@ public class PlayerSpawnGuard : MonoBehaviour
     public float recoverHeight = 1.2f;
     [Tooltip("Half-size (m) of the invisible safety-floor collider.")]
     public float safetyFloorHalfSize = 500f;
+
+    [Header("Spawn recenter on scene load")]
+    [Tooltip("Recenter the play space to the authored spawn XZ once, a few frames after each " +
+             "scene loads — so the player no longer has to reload to fix their start position.")]
+    public bool recenterOnSceneLoad = true;
+    [Tooltip("Frames to wait after load for XR tracking to report a real camera pose before recentering.")]
+    public int  recenterDelayFrames = 3;
 
     private XROrigin _origin;
     private Vector3  _spawn;
@@ -63,6 +71,27 @@ public class PlayerSpawnGuard : MonoBehaviour
     {
         _origin = GetComponent<XROrigin>();
         _spawn  = transform.position;   // the rig's authored spawn position
+    }
+
+    // One-shot recenter on (every) scene load: slide the play space so the camera sits at the
+    // authored spawn XZ. This is the runtime equivalent of the manual reload the player used to
+    // need, and it fixes a boundary mis-spawn that drops them away from the room content.
+    private void OnEnable()
+    {
+        if (recenterOnSceneLoad) StartCoroutine(RecenterAfterLoad());
+    }
+
+    private IEnumerator RecenterAfterLoad()
+    {
+        // Let XR tracking settle so the camera reports a real pose before we translate.
+        for (int i = 0; i < Mathf.Max(1, recenterDelayFrames); i++) yield return null;
+        if (_origin == null || _origin.Camera == null) yield break;
+
+        // XZ-only, translation-only (height untouched → can't reintroduce the floor-sink, and no
+        // rotation → head tracking is never fought). Same primitive the fall-recovery uses.
+        Vector3 cam = _origin.Camera.transform.position;
+        _origin.MoveCameraToWorldLocation(new Vector3(_spawn.x, cam.y, _spawn.z));
+        Debug.Log("[PlayerSpawnGuard] Recentered play space to authored spawn on scene load.");
     }
 
     private void LateUpdate()
