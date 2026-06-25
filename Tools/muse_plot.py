@@ -47,6 +47,10 @@ INDEX_COLS = ["stress", "attention", "cognitive_load"]
 INDEX_LABELS = {"stress": "Stress", "attention": "Attention", "cognitive_load": "Cognitive load"}
 INDEX_COLORS = {"stress": "#d62728", "attention": "#1f77b4", "cognitive_load": "#2ca02c"}
 BAND_COLS = ["delta", "theta", "alpha", "beta", "gamma"]
+# Explicit band colours (the matplotlib default cycle, pinned) so the in-headset Muse HUD can use
+# the SAME hues for the θ/α/β bars — what you see on the PC plot matches what you see in VR.
+BAND_COLORS = {"delta": "#1f77b4", "theta": "#ff7f0e", "alpha": "#2ca02c",
+               "beta": "#d62728", "gamma": "#9467bd"}
 
 # Human labels for the phase names the bridge emits (both the --unity 3-phase flow and the
 # standalone single-baseline flow).
@@ -157,7 +161,7 @@ def render(fig, axes, data, with_bands):
         for c in BAND_COLS:
             y = cols[c]
             if np.any(~np.isnan(y)):
-                axb.plot(t, y, lw=1.2, label=c)
+                axb.plot(t, y, color=BAND_COLORS[c], lw=1.2, label=c)
         axb.set_ylabel("band power (µV²)")
         axb.set_yscale("log")
         axb.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8, framealpha=0.9)

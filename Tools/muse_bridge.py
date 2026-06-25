@@ -597,7 +597,10 @@ def main():
                     help="EEG seconds per band-power window (default 4).")
     ap.add_argument("--update", type=float, default=1.0,
                     help="Seconds between updates / lower = lower latency (default 1).")
-    ap.add_argument("--sensitivity", type=float, default=1.5)
+    ap.add_argument("--sensitivity", type=float, default=1.0,
+                    help="Sigmoid divisor for the indices. LOWER = less compaction / more sensitive "
+                         "(the 0..1 output uses more of its range, so peaks are easier to reach). "
+                         "Default 1.0.")
     ap.add_argument("--attack", type=float, default=0.6,
                     help="Peak-follower rise rate (0..1). Higher = the index jumps to a peak faster "
                          "(more reactive to bursts of stress). Default 0.6.")

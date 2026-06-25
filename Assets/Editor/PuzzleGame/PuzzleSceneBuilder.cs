@@ -1127,14 +1127,18 @@ public static class PuzzleSceneBuilder
         var roomLights = AddRoomLighting(8f, 8f, 3f, litAmbient);
 
         // Zen grey materials  (floor/wall/ceiling shared across all scenes)
-        var floorMat = FloorMat();
-        var wallMat  = WallMat();
-        var tableMat = GetOrCreateMat("Table_Zen",  new Color(0.93f, 0.93f, 0.93f));
+        var floorMat   = FloorMat();
+        var wallMat    = WallMat();
+        var tableMat   = GetOrCreateMat("Table_Zen",  new Color(0.93f, 0.93f, 0.93f));
+        var ceilingMat = CeilingMat();
+        // Matte them so the lantern beam doesn't glint/bounce off the room and over-light it in the
+        // dark (the puzzle pieces keep their own, still-reflective, materials).
+        foreach (var m in new[] { floorMat, wallMat, tableMat, ceilingMat }) MakeMatte(m);
 
         // 8 × 8 × 3 m room (roofed so it feels enclosed and contains the pieces)
         AddFloor(Vector3.zero, 8f, 8f, floorMat);
         AddWalls(8f, 8f, 3f, wallMat);
-        AddCeiling(8f, 8f, 3f, CeilingMat());
+        AddCeiling(8f, 8f, 3f, ceilingMat);
         SpawnDecorations("game");
 
         // Central puzzle table  (top surface at y = 1.0)
@@ -1145,7 +1149,7 @@ public static class PuzzleSceneBuilder
         // ── Systems ───────────────────────────────────────────────────────
         var colaGO = new GameObject("CognitiveLoadAdapter");
         var cola   = colaGO.AddComponent<CognitiveLoadAdapter>();
-        cola.hintThreshold = 0.68f;   // Muse colour hints only on clear above-baseline stress (0.5 = baseline)
+        cola.hintThreshold = 0.70f;   // a Muse PEAK above 0.70 of the normalized signal calls a muse action (0.5 = baseline)
 
         // Muse S Athena BrainFlow adapter — feeds SetStressLevel() from real EEG.
         // Set macAddress in the Inspector before entering Play Mode.
@@ -2039,8 +2043,8 @@ public static class PuzzleSceneBuilder
         var spot = spotGO.AddComponent<Light>();
         spot.type      = LightType.Spot;
         spot.color     = new Color(1f, 0.93f, 0.75f);
-        spot.intensity = 6.5f;
-        spot.range     = 7f;
+        spot.intensity = 5.5f;
+        spot.range     = 4f;        // short reach so pointing into a corner no longer lights the whole room
         spot.spotAngle = 26f;       // tight focused cone
         spot.shadows   = LightShadows.None;
         spot.enabled   = false;
@@ -2083,6 +2087,7 @@ public static class PuzzleSceneBuilder
     {
         var root   = new GameObject(rootName);
         var colMat = GetOrCreateMat("Obstacle_Zen", new Color(0.78f, 0.78f, 0.80f));
+        MakeMatte(colMat);   // obstacles shouldn't bounce the lantern beam around the room
         foreach (var d in HardObstacleDefs())
         {
             var go = GameObject.CreatePrimitive(d.p);
@@ -2319,6 +2324,23 @@ public static class PuzzleSceneBuilder
         mat.color = color;
         AssetDatabase.CreateAsset(mat, path);
         return mat;
+    }
+
+    /// Make a material MATTE: kill specular + environment reflections and drop smoothness to ~0.
+    /// Used on the room surfaces and Hard obstacles so the lantern beam doesn't glint/bounce off
+    /// them and over-light the room — the puzzle pieces keep their own (reflective) materials.
+    private static void MakeMatte(Material m)
+    {
+        if (m == null) return;
+        if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0.0f);
+        if (m.HasProperty("_Glossiness")) m.SetFloat("_Glossiness", 0.0f);
+        if (m.HasProperty("_SpecularHighlights"))    m.SetFloat("_SpecularHighlights", 0f);
+        if (m.HasProperty("_EnvironmentReflections")) m.SetFloat("_EnvironmentReflections", 0f);
+        m.DisableKeyword("_SPECULARHIGHLIGHTS_ON");
+        m.DisableKeyword("_ENVIRONMENTREFLECTIONS_ON");
+        m.EnableKeyword("_SPECULARHIGHLIGHTS_OFF");
+        m.EnableKeyword("_ENVIRONMENTREFLECTIONS_OFF");
+        EditorUtility.SetDirty(m);
     }
 
     /// Self-illuminated material — renders its colour as emission so the object stays

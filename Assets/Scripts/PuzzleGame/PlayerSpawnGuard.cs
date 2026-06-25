@@ -39,6 +39,11 @@ public class PlayerSpawnGuard : MonoBehaviour
     public bool recenterFacingOnLoad = true;
     [Tooltip("Frames to wait after load for XR tracking to report a real camera pose before recentering.")]
     public int  recenterDelayFrames = 3;
+    [Tooltip("Extra yaw (degrees) applied AFTER facing the authored forward, to correct a headset " +
+             "that consistently boots ~90° off the text panels. +90 turns the world clockwise about " +
+             "the player; use -90 if it ends up facing the wrong wall. Applied on load AND on every " +
+             "restart / new-user recenter.")]
+    public float spawnYawOffset = 90f;
 
     private XROrigin _origin;
     private Vector3  _spawn;
@@ -117,6 +122,10 @@ public class PlayerSpawnGuard : MonoBehaviour
                 float yaw = Vector3.SignedAngle(camFwd.normalized, target.normalized, Vector3.up);
                 _origin.RotateAroundCameraUsingOriginUp(yaw);
             }
+
+            // Fixed extra correction for a headset that boots a quarter-turn off the panels.
+            if (Mathf.Abs(spawnYawOffset) > 0.01f)
+                _origin.RotateAroundCameraUsingOriginUp(spawnYawOffset);
         }
         Debug.Log("[PlayerSpawnGuard] Recentered play space (position + facing) on scene load.");
     }

@@ -120,12 +120,12 @@ public class AdaptiveEventHUD : MonoBehaviour
         _body = AddTMP(bodyRT, "BodyText");
         Stretch(_body.GetComponent<RectTransform>());
         _body.text      = "";
-        _body.fontSize  = 25f;                            // larger so the hint reads even when blurry
+        _body.fontSize  = 32f;                            // larger so the hint reads even when blurry
         _body.color     = Color.white;
-        _body.alignment = TextAlignmentOptions.Bottom;   // grow upward from the bottom
+        _body.alignment = TextAlignmentOptions.Center;   // centred in the box (both axes)
         _body.textWrappingMode = TextWrappingModes.Normal;
         _body.richText  = true;
-        _body.margin    = new Vector4(8f, 4f, 8f, 4f);
+        _body.margin    = new Vector4(10f, 6f, 10f, 6f);
     }
 
     // ── Layout helpers ─────────────────────────────────────────────────────────

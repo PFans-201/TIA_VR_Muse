@@ -25,7 +25,12 @@ public class MuseStatusHUD : MonoBehaviour
     // ── Inspector ─────────────────────────────────────────────────────────────
     [Header("Fixed placement (camera-local metres)")]
     [Tooltip("Where the head-locked window sits relative to the headset (X+ right, Y- down, Z+ forward).")]
-    public Vector3 spawnOffset = new Vector3(0.30f, -0.20f, 0.65f);
+    public Vector3 spawnOffset = new Vector3(0.20f, -0.18f, 0.65f);
+
+    [Tooltip("Where the minimized circle sits, in canvas pixels relative to the panel centre " +
+             "(X+ right, Y+ up). Default nudges it down and toward the view centre, kept clear of " +
+             "the bottom session menu in the game scene.")]
+    public Vector2 minimizedOffset = new Vector2(-70f, -120f);
 
     [Tooltip("World-scale per canvas pixel. Larger so the small labels stay readable even slightly blurry.")]
     public float hudScale = 0.00100f;
@@ -57,11 +62,13 @@ public class MuseStatusHUD : MonoBehaviour
     // _bandsDisp indices that feed the metrics: 1 θ, 2 α, 3 β (0 δ and 4 γ are unused → not shown).
     private static readonly int[]     k_UsedBandIdx  = { 1, 2, 3 };
     private static readonly string[]  k_UsedBandName = { "θ", "α", "β" };
+    // Same hues as the PC plot (Tools/muse_plot.py BAND_COLORS) so the in-VR θ/α/β bars match the
+    // desktop bands plot exactly: theta=orange, alpha=green, beta=red.
     private static readonly Color32[] k_UsedBandCol  =
     {
-        new Color32(150, 120, 255, 255),   // θ theta — violet
-        new Color32( 52, 205, 140, 255),   // α alpha — green
-        new Color32(255, 150,  60, 255),   // β beta  — orange
+        new Color32(255, 127,  14, 255),   // θ theta — orange  (#ff7f0e)
+        new Color32( 44, 160,  44, 255),   // α alpha — green   (#2ca02c)
+        new Color32(214,  39,  40, 255),   // β beta  — red     (#d62728)
     };
 
     // ── Window state ────────────────────────────────────────────────────────────
@@ -80,14 +87,19 @@ public class MuseStatusHUD : MonoBehaviour
     // ── Palette ───────────────────────────────────────────────────────────────
     static readonly Color32 CBack   = new Color32( 10,  12,  20, 235);
     static readonly Color32 CGrid   = new Color32( 70,  75,  95,  45);
-    static readonly Color32 CGreen  = new Color32( 48, 210,  88, 255);   // stress
-    static readonly Color32 COrange = new Color32(255, 148,  38, 255);   // cognitive load
-    static readonly Color32 CBlue   = new Color32( 72, 158, 255, 255);   // attention
+    // Index line colours = PC plot INDEX_COLORS (stress=red, cognitive load=green, attention=blue).
+    static readonly Color32 CStress = new Color32(214,  39,  40, 255);   // stress         (#d62728)
+    static readonly Color32 CCog    = new Color32( 44, 160,  44, 255);   // cognitive load (#2ca02c)
+    static readonly Color32 CAtt    = new Color32( 31, 119, 180, 255);   // attention      (#1f77b4)
 
     const string HexScan  = "#FF8020";
     const string HexConn  = "#FFD91A";
     const string HexOK    = "#33E04D";
     const string HexErr   = "#FF3344";
+    // Index text/legend hexes — match the PC plot + the line colours above.
+    const string HexStress = "#D62728";
+    const string HexCog    = "#2CA02C";
+    const string HexAtt    = "#1F77B4";
 
     // ─────────────────────────────────────────────────────────────────────────
     private void Start()
@@ -215,16 +227,16 @@ public class MuseStatusHUD : MonoBehaviour
         if (_valuesLabel != null)
         {
             _valuesLabel.text = haveIndices
-                ? $"<color={HexOK}>stress {stress:F2}</color>     " +
-                  $"<color=#FF9426>cognitive load {cog:F2}</color>     " +
-                  $"<color=#489EFF>attention {att:F2}</color>"
-                : $"<color={HexOK}>stress {stress:F2}</color>     (on-device: stress only)";
+                ? $"<color={HexStress}>stress {stress:F2}</color>     " +
+                  $"<color={HexCog}>cognitive load {cog:F2}</color>     " +
+                  $"<color={HexAtt}>attention {att:F2}</color>"
+                : $"<color={HexStress}>stress {stress:F2}</color>     (on-device: stress only)";
         }
         if (_legendLabel != null)
             _legendLabel.text = haveIndices
-                ? $"<color={HexOK}>■</color> Stress    <color=#FF9426>■</color> Cognitive load    " +
-                  $"<color=#489EFF>■</color> Attention    grid = 30 s  (0–1)"
-                : $"<color={HexOK}>■</color> Stress (0–1)    grid = 30 s";
+                ? $"<color={HexStress}>■</color> Stress    <color={HexCog}>■</color> Cognitive load    " +
+                  $"<color={HexAtt}>■</color> Attention    grid = 30 s  (0–1)"
+                : $"<color={HexStress}>■</color> Stress (0–1)    grid = 30 s";
     }
 
     // ── Graph redraw ──────────────────────────────────────────────────────────
@@ -249,9 +261,9 @@ public class MuseStatusHUD : MonoBehaviour
                 for (int y = 0; y < GraphH; y++) px[y * GraphW + x] = CGrid;
 
             // Connected LINE plots (back to front so stress reads on top), like the PC plot.
-            PlotLine(px, _aBuf, CBlue);     // attention
-            PlotLine(px, _cBuf, COrange);   // cognitive load
-            PlotLine(px, _sBuf, CGreen);    // stress
+            PlotLine(px, _aBuf, CAtt);      // attention
+            PlotLine(px, _cBuf, CCog);      // cognitive load
+            PlotLine(px, _sBuf, CStress);   // stress
         }
 
         _tex.SetPixels32(px);
@@ -413,8 +425,8 @@ public class MuseStatusHUD : MonoBehaviour
         _legendLabel = AddTMP(legRT, "LegendText");
         Stretch(_legendLabel.GetComponent<RectTransform>());
         _legendLabel.text =
-            $"<color={HexOK}>■</color> Stress    <color=#FF9426>■</color> Cognitive load    " +
-            "<color=#489EFF>■</color> Attention    grid = 30 s  (0–1)";
+            $"<color={HexStress}>■</color> Stress    <color={HexCog}>■</color> Cognitive load    " +
+            $"<color={HexAtt}>■</color> Attention    grid = 30 s  (0–1)";
         _legendLabel.fontSize  = 10.5f;
         _legendLabel.color     = new Color(0.65f, 0.68f, 0.75f, 1f);
         _legendLabel.alignment = TextAlignmentOptions.Center;
@@ -449,9 +461,9 @@ public class MuseStatusHUD : MonoBehaviour
         body.text =
             "All three are measured against your active-VR baseline and squashed to 0–1 (sigmoid). " +
             "<b>0.50 = same as baseline</b>; higher = more.  (z = std-devs above baseline.)\n\n" +
-            "<color=#33E04D><b>Stress</b></color> = sigmoid((βz − αz)/2) — rises as beta/arousal goes up and alpha drops.\n\n" +
-            "<color=#FF9426><b>Cognitive load</b></color> = sigmoid((θz − αz)/2) — rises as frontal theta goes up and alpha drops.\n\n" +
-            "<color=#489EFF><b>Attention</b></color> = sigmoid((βz − θz)/2) — the inverse Theta/Beta Ratio. " +
+            $"<color={HexStress}><b>Stress</b></color> = sigmoid((βz − αz)/2) — rises as beta/arousal goes up and alpha drops.\n\n" +
+            $"<color={HexCog}><b>Cognitive load</b></color> = sigmoid((θz − αz)/2) — rises as frontal theta goes up and alpha drops.\n\n" +
+            $"<color={HexAtt}><b>Attention</b></color> = sigmoid((βz − θz)/2) — the inverse Theta/Beta Ratio. " +
             "TBR = theta/beta; a LOW TBR (theta down, beta up) means focus, so attention rises as the TBR falls.\n\n" +
             "<i>Bands used: θ theta, α alpha, β beta (delta & gamma are not used).</i>";
 
@@ -473,7 +485,7 @@ public class MuseStatusHUD : MonoBehaviour
         var rt = (RectTransform)_minimizedGO.transform;
         rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
         rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.anchoredPosition = Vector2.zero;
+        rt.anchoredPosition = minimizedOffset;   // down + toward view centre, clear of the session menu
         rt.sizeDelta = new Vector2(CircleD, CircleD);
 
         // The circle is a button (click → expand). Fixed in view like the rest of the HUD.
