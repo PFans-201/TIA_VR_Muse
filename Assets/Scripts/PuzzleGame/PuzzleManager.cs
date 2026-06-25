@@ -61,7 +61,7 @@ public class PuzzleManager : MonoBehaviour
         // auto-snap the moment the puzzle starts — the player must carry each piece into range.
         // magnetWhileHeld still lets it click home from the hand once it's close (Easy convenience).
         pieceCount = 5,  magnetForce = 8f, magnetRange = 0.12f, magnetWhileHeld = true,
-        spawnMode = SpawnMode.NearSolved, startOffset = 0.30f,
+        spawnMode = SpawnMode.NearSolved, startOffset = 0.40f,
         pieceBrightness = 1.00f, ghostIdleAlpha = 0.55f, ghostActiveAlpha = 0.80f
     };
     public DifficultySettings mediumSettings = new DifficultySettings
@@ -82,8 +82,11 @@ public class PuzzleManager : MonoBehaviour
     [Header("References")]
     [Tooltip("Pieces are dropped/scattered around this point on a CeilingDrop start")]
     public Transform       puzzleAnchor;
-    [Tooltip("Horizontal radius (m) used to scatter ceiling-dropped pieces")]
+    [Tooltip("Legacy disc radius — superseded by ceilingDropAreaHalf (kept for compatibility).")]
     public float           ceilingDropRadius = 1.6f;
+    [Tooltip("Half-extents (m, X×Z) of the rectangle pieces are scattered across on Hard — set to " +
+             "roughly the room interior so pieces land EVERYWHERE, not just the centre.")]
+    public Vector2         ceilingDropAreaHalf = new Vector2(3.0f, 3.0f);
     [Tooltip("Height (m) pieces drop from on Hard")]
     public float           ceilingDropHeight = 2.6f;
     [Tooltip("Optional — wired by the scene builder; manages MUSE S / behaviour hint colours")]
@@ -230,8 +233,11 @@ public class PuzzleManager : MonoBehaviour
         {
             case SpawnMode.CeilingDrop:
                 Vector3 baseP = puzzleAnchor != null ? puzzleAnchor.position : solved;
-                Vector2 disc  = UnityEngine.Random.insideUnitCircle * ceilingDropRadius;
-                pieceObj.transform.position = new Vector3(baseP.x + disc.x, ceilingDropHeight, baseP.z + disc.y);
+                // Uniform over the whole room rectangle (not a centred disc) so Hard pieces land
+                // EVERYWHERE — corners included — instead of clustering near the middle.
+                float dx = UnityEngine.Random.Range(-ceilingDropAreaHalf.x, ceilingDropAreaHalf.x);
+                float dz = UnityEngine.Random.Range(-ceilingDropAreaHalf.y, ceilingDropAreaHalf.y);
+                pieceObj.transform.position = new Vector3(baseP.x + dx, ceilingDropHeight, baseP.z + dz);
                 pieceObj.transform.rotation = UnityEngine.Random.rotation;
                 break;
 
