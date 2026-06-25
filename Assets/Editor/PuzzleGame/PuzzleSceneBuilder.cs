@@ -426,8 +426,15 @@ public static class PuzzleSceneBuilder
             go.transform.position   = new Vector3(gx, 0.87f, 1.8f);
             go.transform.localScale = Vector3.one * 0.14f;
             go.GetComponent<Renderer>().material = mat;
-            go.AddComponent<Rigidbody>().mass = 0.15f;
-            go.AddComponent<XRGrabInteractable>();
+            // Match the GAME pieces' physics so practice feels identical: interpolated,
+            // continuous-dynamic collision (no tunnelling through the shelf/walls) and
+            // velocity-tracked grabbing (the held object collides instead of ghosting through).
+            var grb = go.AddComponent<Rigidbody>();
+            grb.mass          = 0.15f;
+            grb.interpolation = RigidbodyInterpolation.Interpolate;
+            grb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+            go.AddComponent<XRGrabInteractable>().movementType =
+                XRBaseInteractable.MovementType.VelocityTracking;
             gx += 0.37f;
         }
         AddBox("Pedestal_Left",  new Vector3(-0.7f, 0.55f, 0.5f), new Vector3(0.30f, 1.1f, 0.30f), tableMat);
@@ -462,8 +469,9 @@ public static class PuzzleSceneBuilder
         MakeUIText(info.transform, "Body",
                    "Use the thumbstick to move and turn.\n\nReach toward an object on the shelf and " +
                    "squeeze the grip button to pick it up; release to drop it on a pedestal.\n\n" +
+                   "While holding a piece, push the thumbstick to ROTATE it.\n\n" +
                    "Take your time getting comfortable.",
-                   new Vector2(0f, -20f), new Vector2(660f, 240f), 24, new Color(0.22f, 0.22f, 0.22f));
+                   new Vector2(0f, -20f), new Vector2(660f, 250f), 23, new Color(0.22f, 0.22f, 0.22f));
 
         var timer = MakeUIText(root.transform, "Timer", "",
                                new Vector2(0f, -150f), new Vector2(700f, 50f), 26, new Color(0.20f, 0.20f, 0.20f));
@@ -1565,12 +1573,19 @@ public static class PuzzleSceneBuilder
         var hardInfo   = MakeInfoBadge(diffPanel.transform, "HardInfoBadge",   new Vector2( 190f, -28f));
 
         MakeUIText(diffPanel.transform, "HintLabel",
-                   "Tap the \"i\" under a mode for details. Your choice sets the starting assistance — " +
-                   "the game then adapts in real time to your stress level from the Muse S headband.",
+                   "Each mode sets your starting assistance — the game then adapts in real time to " +
+                   "your stress from the Muse headband. Tap a mode's \"i\" for details.",
                    new Vector2(0f, -110f), new Vector2(560f, 60f), 16, new Color(0.62f, 0.62f, 0.64f));
 
+        // ── Status label (created BEFORE the info overlay so the overlay draws on top of it) ──
+        var statusLabel = MakeUIText(root.transform, "StatusLabel", "",
+                                     new Vector2(0f, -205f), new Vector2(580f, 44f), 20,
+                                     new Color(0.85f, 0.85f, 0.85f));
+
         // ── Per-mode info overlay panel (one panel; title/body swap per badge) ──
-        var infoPanel = MakePanel(root.transform, "InfoPanel", new Color(0.06f, 0.06f, 0.08f, 0.97f));
+        // Created LAST so it is the top-most sibling: when shown it fully covers the difficulty
+        // panel AND the status label, so no underlying text bleeds through the overlay.
+        var infoPanel = MakePanel(root.transform, "InfoPanel", new Color(0.06f, 0.06f, 0.08f, 1f));
         var infoTitle = MakeUIText(infoPanel.transform, "InfoTitle", "",
                                    new Vector2(0f, 175f), new Vector2(560f, 55f), 30, Color.white);
         var infoBody  = MakeUIText(infoPanel.transform, "InfoBody", "",
@@ -1578,11 +1593,6 @@ public static class PuzzleSceneBuilder
         var closeInfo = MakeUIButton(infoPanel.transform, "InfoCloseBtn", "Close",
                                      new Vector2(0f, -195f), new Color(0.45f, 0.45f, 0.50f));
         infoPanel.SetActive(false);
-
-        // ── Status label ───────────────────────────────────────────────────
-        var statusLabel = MakeUIText(root.transform, "StatusLabel", "",
-                                     new Vector2(0f, -205f), new Vector2(580f, 44f), 20,
-                                     new Color(0.85f, 0.85f, 0.85f));
 
         // ── Wire DifficultyUI component ────────────────────────────────────
         var diffUI = root.AddComponent<DifficultyUI>();
@@ -1783,16 +1793,16 @@ public static class PuzzleSceneBuilder
         var spot = spotGO.AddComponent<Light>();
         spot.type      = LightType.Spot;
         spot.color     = new Color(1f, 0.93f, 0.75f);
-        spot.intensity = 9f;
-        spot.range     = 14f;
-        spot.spotAngle = 55f;
+        spot.intensity = 8f;
+        spot.range     = 10f;       // shorter throw → less wash on the far walls
+        spot.spotAngle = 34f;       // tight, focused cone (was 55 — it spread too much)
         spot.shadows   = LightShadows.None;
         spot.enabled   = false;
 
         var lantern = go.AddComponent<ArmLantern>();
         lantern.beam          = spot;
-        lantern.baseSpotAngle = 55f;   // calm
-        lantern.maxSpotAngle  = 95f;   // very stressed → wider, easier search
+        lantern.baseSpotAngle = 34f;   // calm — a focused beam, not a floodlight
+        lantern.maxSpotAngle  = 60f;   // very stressed → wider, easier search
         go.SetActive(false);
         return go;
     }
@@ -1816,11 +1826,12 @@ public static class PuzzleSceneBuilder
             go.GetComponent<Renderer>().material = colMat;
         }
 
-        // Low walls (4)
-        Add("Wall_A", PrimitiveType.Cube, new Vector3(-1.7f, 0.45f,  0.6f), new Vector3(0.15f, 0.9f, 1.6f), Vector3.zero);
-        Add("Wall_B", PrimitiveType.Cube, new Vector3( 1.7f, 0.45f, -0.6f), new Vector3(0.15f, 0.9f, 1.6f), Vector3.zero);
-        Add("Wall_C", PrimitiveType.Cube, new Vector3( 0.6f, 0.35f,  1.9f), new Vector3(1.8f,  0.7f, 0.15f), Vector3.zero);
-        Add("Wall_D", PrimitiveType.Cube, new Vector3(-0.6f, 0.35f, -1.9f), new Vector3(1.8f,  0.7f, 0.15f), Vector3.zero);
+        // Taller walls (4) — on Hard they should block sight-lines so pieces are harder to find
+        // (sit each on the floor: centre y = height/2).
+        Add("Wall_A", PrimitiveType.Cube, new Vector3(-1.7f, 0.80f,  0.6f), new Vector3(0.15f, 1.6f, 1.6f), Vector3.zero);
+        Add("Wall_B", PrimitiveType.Cube, new Vector3( 1.7f, 0.80f, -0.6f), new Vector3(0.15f, 1.6f, 1.6f), Vector3.zero);
+        Add("Wall_C", PrimitiveType.Cube, new Vector3( 0.6f, 0.65f,  1.9f), new Vector3(1.8f,  1.3f, 0.15f), Vector3.zero);
+        Add("Wall_D", PrimitiveType.Cube, new Vector3(-0.6f, 0.65f, -1.9f), new Vector3(1.8f,  1.3f, 0.15f), Vector3.zero);
         // Columns (3)
         Add("Column_A", PrimitiveType.Cylinder, new Vector3(-1.4f, 0.9f, -1.4f), new Vector3(0.18f, 0.9f, 0.18f), Vector3.zero);
         Add("Column_B", PrimitiveType.Cylinder, new Vector3( 1.4f, 0.9f,  1.4f), new Vector3(0.18f, 0.9f, 0.18f), Vector3.zero);

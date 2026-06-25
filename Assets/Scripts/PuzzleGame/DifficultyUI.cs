@@ -92,7 +92,9 @@ public class DifficultyUI : MonoBehaviour
     private void ShowDifficultyStep()
     {
         if (difficultyPanel != null) difficultyPanel.SetActive(true);
-        if (statusLabel     != null) statusLabel.text = "Choose a difficulty";
+        // The panel title already says "Choose Difficulty"; keep the bottom status clear here so
+        // it isn't duplicated (it's used to confirm the picked mode in ConfirmDifficulty).
+        if (statusLabel     != null) statusLabel.text = string.Empty;
         RefreshDifficultyButtons();
     }
 
