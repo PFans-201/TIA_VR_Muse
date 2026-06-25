@@ -41,8 +41,16 @@ public class PuzzleManager : MonoBehaviour
     // ── Robot puzzle pieces ───────────────────────────────────────────────────
 
     [Header("Robot Puzzle")]
-    [Tooltip("All robot pieces, ordered. Each difficulty uses the first N (its pieceCount).")]
+    [Tooltip("Legacy/shared ordered list. Used only for a difficulty that has no per-difficulty " +
+             "set below — it then takes the first N (its pieceCount).")]
     public List<GameObject> robotPieces = new();
+
+    [Header("Per-Difficulty Piece Sets (optional)")]
+    [Tooltip("When a level's list is non-empty the WHOLE list is its puzzle (each from its own " +
+             "prefab); piece count = list size, and robotPieces/pieceCount are ignored for it.")]
+    public List<GameObject> easyPieces   = new();
+    public List<GameObject> mediumPieces = new();
+    public List<GameObject> hardPieces   = new();
 
     // ── Difficulty settings ───────────────────────────────────────────────────
 
@@ -102,9 +110,38 @@ public class PuzzleManager : MonoBehaviour
     private void Awake()
     {
         // Hide every piece and snap zone immediately — before the first frame renders.
-        SetGroupActive(robotPieces, false);
-        HideAllSnapZones();
+        HideEverything();
     }
+
+    // ── Difficulty lookups ────────────────────────────────────────────────────
+
+    /// The settings block for a level.
+    public DifficultySettings SettingsFor(DifficultyLevel level) => level switch
+    {
+        DifficultyLevel.Easy   => easySettings,
+        DifficultyLevel.Medium => mediumSettings,
+        _                      => hardSettings,
+    };
+
+    /// The piece set for a level: its own per-difficulty list when populated, otherwise the
+    /// first pieceCount of the shared robotPieces list (legacy threshold mode).
+    public List<GameObject> PieceSetFor(DifficultyLevel level)
+    {
+        var perLevel = level switch
+        {
+            DifficultyLevel.Easy   => easyPieces,
+            DifficultyLevel.Medium => mediumPieces,
+            _                      => hardPieces,
+        };
+        if (perLevel != null && perLevel.Count > 0)
+            return perLevel;
+
+        int count = Mathf.Clamp(SettingsFor(level).pieceCount, 0, robotPieces.Count);
+        return robotPieces.GetRange(0, count);
+    }
+
+    /// Number of pieces a level will use — drives the difficulty-selection UI label.
+    public int PieceCountFor(DifficultyLevel level) => PieceSetFor(level).Count;
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -122,18 +159,12 @@ public class PuzzleManager : MonoBehaviour
         _solvedCount       = 0;
         _puzzleStarted     = false;   // reset until baseline is stored below
 
-        SetGroupActive(robotPieces, false);
-        HideAllSnapZones();
+        HideEverything();
 
-        DifficultySettings s = level switch
-        {
-            DifficultyLevel.Easy   => easySettings,
-            DifficultyLevel.Medium => mediumSettings,
-            _                      => hardSettings,
-        };
+        DifficultySettings s = SettingsFor(level);
 
-        int count = Mathf.Clamp(s.pieceCount, 0, robotPieces.Count);
-        _activePieces = robotPieces.GetRange(0, count);
+        // Whole per-difficulty set, or the first-N legacy slice — copied so we own the list.
+        _activePieces = new List<GameObject>(PieceSetFor(level));
 
         _baselineSettings = s;
         _puzzleStarted    = true;
@@ -270,17 +301,22 @@ public class PuzzleManager : MonoBehaviour
         OnPuzzleCompleted?.Invoke(_currentDifficulty);
     }
 
-    private void SetGroupActive(List<GameObject> group, bool active)
+    /// Every managed piece across the shared list and all per-difficulty sets.
+    private IEnumerable<GameObject> AllPieces()
     {
-        foreach (var obj in group)
-            if (obj != null) obj.SetActive(active);
+        foreach (var p in robotPieces)  yield return p;
+        foreach (var p in easyPieces)   yield return p;
+        foreach (var p in mediumPieces) yield return p;
+        foreach (var p in hardPieces)   yield return p;
     }
 
-    private void HideAllSnapZones()
+    /// Deactivate every piece and its snap zone (any difficulty).
+    private void HideEverything()
     {
-        foreach (var pieceObj in robotPieces)
+        foreach (var pieceObj in AllPieces())
         {
             if (pieceObj == null) continue;
+            pieceObj.SetActive(false);
             var piece = pieceObj.GetComponent<PuzzlePiece>();
             if (piece?.correctPlacementTarget != null)
                 piece.correctPlacementTarget.gameObject.SetActive(false);

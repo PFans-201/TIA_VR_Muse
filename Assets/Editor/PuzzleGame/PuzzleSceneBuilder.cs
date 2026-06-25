@@ -32,6 +32,21 @@ public static class PuzzleSceneBuilder
     private const string k_ZenScene     = "Assets/Scenes/ZenPuzzleRoom.unity";
     private const string k_XRRigPrefab  = "Assets/VRTemplateAssets/Prefabs/Setup/Complete XR Origin Set Up Variant.prefab";
 
+    // Optional hand-authored robot model. If present, the builder splits its direct children
+    // into grabbable pieces (each child = one piece, generating its own ghost/snap zone) instead
+    // of the built-in primitive robot. Author one child per piece, named "01_Head", "02_Torso", …
+    // (numeric prefix = difficulty order: Easy uses the first N, Medium more, Hard all).
+    private const string k_RobotPrefabDir = "Assets/Prefabs/PuzzleGame";
+    private const string k_RobotPrefab    = "Assets/Prefabs/PuzzleGame/RobotModel.prefab";
+    private const string k_RobotAuthScene = "Assets/Scenes/_RobotAuthoring.unity";
+
+    // Optional per-difficulty robots. If a level's prefab is present, the WHOLE prefab is that
+    // level's puzzle and the piece count shown in the UI = its child count (no first-N threshold).
+    // A level with no prefab here falls back to the single k_RobotPrefab / primitive threshold.
+    private const string k_RobotPrefabEasy   = "Assets/Prefabs/PuzzleGame/RobotModel_Easy.prefab";
+    private const string k_RobotPrefabMedium = "Assets/Prefabs/PuzzleGame/RobotModel_Medium.prefab";
+    private const string k_RobotPrefabHard   = "Assets/Prefabs/PuzzleGame/RobotModel_Hard.prefab";
+
     // Redesigned 3-scene session flow (Intro → Tutorial → Game).
     private const string k_IntroScene   = "Assets/Scenes/01_Intro.unity";
     private const string k_Tut2Scene    = "Assets/Scenes/02_Tutorial.unity";
@@ -180,6 +195,100 @@ public static class PuzzleSceneBuilder
         BuildSessionFlowScenes();
         AddXRDeviceSimulatorAllScenes();
         Debug.Log("[PuzzleSceneBuilder] PC-debug prep done — enter Play mode to drive the rig with mouse/keyboard.");
+    }
+
+    // ── Robot authoring workflow ───────────────────────────────────────────────
+    // Hand-shape the robot model that the game splits into puzzle pieces. The editable
+    // model lives in one prefab (k_RobotPrefab); when present the builder uses it instead
+    // of the built-in primitive robot. These three menus are the whole loop:
+    //   ① open a sandbox scene seeded with the current 22 parts (+ on-screen instructions)
+    //   ② save the edited "RobotModel" root back to the prefab
+    //   ↻ then run a normal "Prepare for APK Build…" — it rebuilds the room from the prefab.
+
+    // Root-name → prefab-path map: one editable robot per difficulty.
+    private static readonly (string root, string path)[] k_RobotRootMap =
+    {
+        ("RobotModel_Easy",   k_RobotPrefabEasy),
+        ("RobotModel_Medium", k_RobotPrefabMedium),
+        ("RobotModel_Hard",   k_RobotPrefabHard),
+    };
+
+    /// Opens a sandbox scene seeded with three editable robots — RobotModel_Easy / _Medium / _Hard
+    /// — standing on the floor, each beside a height pole, for authoring one robot per difficulty.
+    [MenuItem("Puzzle Game/Robot Authoring/① Open Authoring Scene", priority = 40)]
+    public static void OpenRobotAuthoringScene()
+    {
+        if (BlockedByPlayMode()) return;
+        if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+        EnsureFolderPath(k_MatDir);
+        BuildRobotAuthoringScene();
+    }
+
+    /// Saves every robot root found in the open scene (RobotModel_Easy/_Medium/_Hard) to its
+    /// prefab. Authoring helpers (floor, poles, panel, lights) sit outside the roots, so they
+    /// are excluded.
+    [MenuItem("Puzzle Game/Robot Authoring/② Save Robots → Prefabs", priority = 41)]
+    public static void SaveRobotModelsToPrefabs()
+    {
+        if (BlockedByPlayMode()) return;
+        EnsureFolderPath(k_RobotPrefabDir);
+
+        int saved = 0;
+        Object lastSaved = null;
+        foreach (var (rootName, path) in k_RobotRootMap)
+        {
+            var root = GameObject.Find(rootName);
+            if (root == null) continue;
+            var pf = PrefabUtility.SaveAsPrefabAsset(root, path, out bool ok);
+            if (ok && pf != null)
+            {
+                saved++; lastSaved = pf;
+                Debug.Log($"[PuzzleSceneBuilder] Saved '{rootName}' → '{path}' ({root.transform.childCount} pieces).");
+            }
+            else Debug.LogError($"[PuzzleSceneBuilder] Failed to save '{rootName}' → '{path}'.");
+        }
+
+        AssetDatabase.Refresh();
+        if (saved == 0)
+        {
+            EditorUtility.DisplayDialog("No robot roots found",
+                "This scene has no root named 'RobotModel_Easy', 'RobotModel_Medium' or " +
+                "'RobotModel_Hard'.\n\nOpen the authoring scene (Robot Authoring ▸ ① Open " +
+                "Authoring Scene), or rename your model roots to those, then try again.", "OK");
+            return;
+        }
+        if (lastSaved != null) { EditorGUIUtility.PingObject(lastSaved); Selection.activeObject = lastSaved; }
+        Debug.Log($"[PuzzleSceneBuilder] Saved {saved} robot prefab(s). " +
+                  "Now run a 'Prepare for APK Build…' menu to rebuild the room from them.");
+    }
+
+    /// One-click: write the three per-difficulty placeholder prefabs without touching the open scene.
+    [MenuItem("Puzzle Game/Robot Authoring/Generate Placeholder Prefabs (no scene)", priority = 60)]
+    public static void GenerateRobotPerDifficultyPlaceholders()
+    {
+        if (BlockedByPlayMode()) return;
+        EnsureFolderPath(k_MatDir);
+        EnsureFolderPath(k_RobotPrefabDir);
+
+        WritePlaceholderPrefab("RobotModel_Easy",   5,  k_RobotPrefabEasy);
+        WritePlaceholderPrefab("RobotModel_Medium", 12, k_RobotPrefabMedium);
+        WritePlaceholderPrefab("RobotModel_Hard",   22, k_RobotPrefabHard);
+        AssetDatabase.Refresh();
+    }
+
+    /// Builds a placeholder robot root, saves it to a prefab, and discards the scene object.
+    private static void WritePlaceholderPrefab(string rootName, int maxPieces, string path)
+    {
+        var root  = BuildRobotModelRoot(rootName, maxPieces);
+        var saved = PrefabUtility.SaveAsPrefabAsset(root, path, out bool ok);
+        Object.DestroyImmediate(root);
+        if (ok && saved != null)
+        {
+            EditorGUIUtility.PingObject(saved);
+            Debug.Log($"[PuzzleSceneBuilder] Placeholder '{rootName}' → '{path}' " +
+                      $"({(maxPieces == int.MaxValue ? "all" : maxPieces.ToString())} parts).");
+        }
+        else Debug.LogError($"[PuzzleSceneBuilder] Failed to write placeholder '{path}'.");
     }
 
     // Worker for the prep menus above (UDP by default; the BLE menu flips s_useUdpBridge).
@@ -877,43 +986,15 @@ public static class PuzzleSceneBuilder
         pm.puzzleAnchor = anchorGO.transform;
 
         // ── Robot puzzle ──────────────────────────────────────────────────
-        //   One ordered list. Each difficulty uses the first N (Easy 5 / Medium 12 / Hard 22).
-        //   The 12 main parts come first (so Easy/Medium use recognisable anatomy); the extra
-        //   detail sub-pieces (panels, plates, bolts, antenna) are appended for Hard only.
-        //   (n, primitive, world pos, euler, scale, colour)
-        var robotDefs = new (string n, PrimitiveType p, Vector3 pos, Vector3 euler, Vector3 scale, Color col)[]
-        {
-            // Easy (5): Head, Torso, LeftArm, RightArm, LeftLeg
-            ("Head",         PrimitiveType.Cube,     new Vector3( 0.00f, 1.90f,  0.00f), Vector3.zero,             new Vector3(0.26f, 0.26f, 0.22f), new Color(0.60f, 0.72f, 0.85f)),
-            ("Torso",        PrimitiveType.Cube,     new Vector3( 0.00f, 1.52f,  0.00f), Vector3.zero,             new Vector3(0.38f, 0.36f, 0.22f), new Color(0.55f, 0.65f, 0.75f)),
-            ("LeftArm",      PrimitiveType.Cylinder, new Vector3(-0.32f, 1.58f,  0.00f), new Vector3(0f, 0f,  80f), new Vector3(0.09f, 0.25f, 0.09f), new Color(0.62f, 0.68f, 0.72f)),
-            ("RightArm",     PrimitiveType.Cylinder, new Vector3( 0.32f, 1.58f,  0.00f), new Vector3(0f, 0f, -80f), new Vector3(0.09f, 0.25f, 0.09f), new Color(0.62f, 0.68f, 0.72f)),
-            ("LeftLeg",      PrimitiveType.Cylinder, new Vector3(-0.12f, 1.20f,  0.00f), Vector3.zero,             new Vector3(0.10f, 0.28f, 0.10f), new Color(0.50f, 0.52f, 0.55f)),
-            // Medium adds (12): + RightLeg, LeftForearm, RightForearm, feet, eyes
-            ("RightLeg",     PrimitiveType.Cylinder, new Vector3( 0.12f, 1.20f,  0.00f), Vector3.zero,             new Vector3(0.10f, 0.28f, 0.10f), new Color(0.50f, 0.52f, 0.55f)),
-            ("LeftForearm",  PrimitiveType.Cylinder, new Vector3(-0.50f, 1.38f,  0.00f), new Vector3(0f, 0f,  65f), new Vector3(0.07f, 0.20f, 0.07f), new Color(0.58f, 0.62f, 0.65f)),
-            ("RightForearm", PrimitiveType.Cylinder, new Vector3( 0.50f, 1.38f,  0.00f), new Vector3(0f, 0f, -65f), new Vector3(0.07f, 0.20f, 0.07f), new Color(0.58f, 0.62f, 0.65f)),
-            ("LeftFoot",     PrimitiveType.Cube,     new Vector3(-0.12f, 0.97f,  0.06f), Vector3.zero,             new Vector3(0.16f, 0.07f, 0.24f), new Color(0.42f, 0.44f, 0.46f)),
-            ("RightFoot",    PrimitiveType.Cube,     new Vector3( 0.12f, 0.97f,  0.06f), Vector3.zero,             new Vector3(0.16f, 0.07f, 0.24f), new Color(0.42f, 0.44f, 0.46f)),
-            ("LeftEye",      PrimitiveType.Sphere,   new Vector3(-0.07f, 1.96f,  0.12f), Vector3.zero,             new Vector3(0.055f,0.055f,0.055f), new Color(0.08f, 0.08f, 0.10f)),
-            ("RightEye",     PrimitiveType.Sphere,   new Vector3( 0.07f, 1.96f,  0.12f), Vector3.zero,             new Vector3(0.055f,0.055f,0.055f), new Color(0.08f, 0.08f, 0.10f)),
-            // Hard adds (22): detail sub-pieces — panels, shoulders, neck, antenna, hands, hip, bolts
-            ("ChestPlate",   PrimitiveType.Cube,     new Vector3( 0.00f, 1.56f,  0.115f), Vector3.zero,            new Vector3(0.24f, 0.22f, 0.03f), new Color(0.66f, 0.74f, 0.82f)),
-            ("BackPlate",    PrimitiveType.Cube,     new Vector3( 0.00f, 1.56f, -0.115f), Vector3.zero,            new Vector3(0.24f, 0.22f, 0.03f), new Color(0.48f, 0.55f, 0.62f)),
-            ("LeftShoulder", PrimitiveType.Sphere,   new Vector3(-0.26f, 1.66f,  0.00f), Vector3.zero,             new Vector3(0.12f, 0.12f, 0.12f), new Color(0.70f, 0.74f, 0.78f)),
-            ("RightShoulder",PrimitiveType.Sphere,   new Vector3( 0.26f, 1.66f,  0.00f), Vector3.zero,             new Vector3(0.12f, 0.12f, 0.12f), new Color(0.70f, 0.74f, 0.78f)),
-            ("Neck",         PrimitiveType.Cylinder, new Vector3( 0.00f, 1.74f,  0.00f), Vector3.zero,             new Vector3(0.09f, 0.05f, 0.09f), new Color(0.52f, 0.56f, 0.60f)),
-            ("Antenna",      PrimitiveType.Cylinder, new Vector3( 0.00f, 2.10f,  0.00f), Vector3.zero,             new Vector3(0.02f, 0.10f, 0.02f), new Color(0.85f, 0.40f, 0.30f)),
-            ("LeftHand",     PrimitiveType.Cube,     new Vector3(-0.62f, 1.22f,  0.00f), Vector3.zero,             new Vector3(0.09f, 0.09f, 0.09f), new Color(0.60f, 0.64f, 0.68f)),
-            ("RightHand",    PrimitiveType.Cube,     new Vector3( 0.62f, 1.22f,  0.00f), Vector3.zero,             new Vector3(0.09f, 0.09f, 0.09f), new Color(0.60f, 0.64f, 0.68f)),
-            ("Hip",          PrimitiveType.Cube,     new Vector3( 0.00f, 1.34f,  0.00f), Vector3.zero,             new Vector3(0.30f, 0.10f, 0.20f), new Color(0.46f, 0.50f, 0.54f)),
-            ("ChestBolt",    PrimitiveType.Sphere,   new Vector3( 0.00f, 1.49f,  0.15f), Vector3.zero,             new Vector3(0.05f, 0.05f, 0.05f), new Color(0.90f, 0.78f, 0.30f)),
-        };
-
+        //   Source priority per difficulty:
+        //     1. its own per-difficulty prefab (RobotModel_<Level>) → whole prefab, count = children
+        //     2. the shared single prefab (RobotModel)              → first-N threshold
+        //     3. the built-in primitive robot                       → first-N threshold
         var snapRootRobot = new GameObject("SnapZones_Robot");
-        pm.robotPieces = BuildPuzzlePieces(robotDefs, snapRootRobot.transform);
+        BuildRobotPieceSets(pm, snapRootRobot.transform);
 
         // ── Difficulty UI (single step, robot only) ───────────────────────
+        //   Built AFTER the piece sets so the "N pieces" labels reflect the resolved counts.
         BuildDifficultyCanvas(pm, new Vector3(0f, 1.8f, -1.8f));
 
         // ── Ambient instruction text ──────────────────────────────────────
@@ -962,6 +1043,408 @@ public static class PuzzleSceneBuilder
             allPieces.Add(pieceGO);
         }
         return allPieces;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Robot model definition + authoring scene
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// The built-in 22-part robot, ordered for the difficulty ramp (Easy 5 / Medium 12 / Hard 22).
+    /// Single source of truth shared by the primitive fallback and the authoring/placeholder tools.
+    /// The 12 main parts come first (recognisable anatomy for Easy/Medium); detail sub-pieces follow.
+    /// (n, primitive, world pos, euler, scale, colour)
+    private static (string n, PrimitiveType p, Vector3 pos, Vector3 euler, Vector3 scale, Color col)[] RobotPrimitiveDefs()
+    {
+        return new (string n, PrimitiveType p, Vector3 pos, Vector3 euler, Vector3 scale, Color col)[]
+        {
+            // Easy (5): Head, Torso, LeftArm, RightArm, LeftLeg
+            ("Head",         PrimitiveType.Cube,     new Vector3( 0.00f, 1.90f,  0.00f), Vector3.zero,             new Vector3(0.26f, 0.26f, 0.22f), new Color(0.60f, 0.72f, 0.85f)),
+            ("Torso",        PrimitiveType.Cube,     new Vector3( 0.00f, 1.52f,  0.00f), Vector3.zero,             new Vector3(0.38f, 0.36f, 0.22f), new Color(0.55f, 0.65f, 0.75f)),
+            ("LeftArm",      PrimitiveType.Cylinder, new Vector3(-0.32f, 1.58f,  0.00f), new Vector3(0f, 0f,  80f), new Vector3(0.09f, 0.25f, 0.09f), new Color(0.62f, 0.68f, 0.72f)),
+            ("RightArm",     PrimitiveType.Cylinder, new Vector3( 0.32f, 1.58f,  0.00f), new Vector3(0f, 0f, -80f), new Vector3(0.09f, 0.25f, 0.09f), new Color(0.62f, 0.68f, 0.72f)),
+            ("LeftLeg",      PrimitiveType.Cylinder, new Vector3(-0.12f, 1.20f,  0.00f), Vector3.zero,             new Vector3(0.10f, 0.28f, 0.10f), new Color(0.50f, 0.52f, 0.55f)),
+            // Medium adds (12): + RightLeg, LeftForearm, RightForearm, feet, eyes
+            ("RightLeg",     PrimitiveType.Cylinder, new Vector3( 0.12f, 1.20f,  0.00f), Vector3.zero,             new Vector3(0.10f, 0.28f, 0.10f), new Color(0.50f, 0.52f, 0.55f)),
+            ("LeftForearm",  PrimitiveType.Cylinder, new Vector3(-0.50f, 1.38f,  0.00f), new Vector3(0f, 0f,  65f), new Vector3(0.07f, 0.20f, 0.07f), new Color(0.58f, 0.62f, 0.65f)),
+            ("RightForearm", PrimitiveType.Cylinder, new Vector3( 0.50f, 1.38f,  0.00f), new Vector3(0f, 0f, -65f), new Vector3(0.07f, 0.20f, 0.07f), new Color(0.58f, 0.62f, 0.65f)),
+            ("LeftFoot",     PrimitiveType.Cube,     new Vector3(-0.12f, 0.97f,  0.06f), Vector3.zero,             new Vector3(0.16f, 0.07f, 0.24f), new Color(0.42f, 0.44f, 0.46f)),
+            ("RightFoot",    PrimitiveType.Cube,     new Vector3( 0.12f, 0.97f,  0.06f), Vector3.zero,             new Vector3(0.16f, 0.07f, 0.24f), new Color(0.42f, 0.44f, 0.46f)),
+            ("LeftEye",      PrimitiveType.Sphere,   new Vector3(-0.07f, 1.96f,  0.12f), Vector3.zero,             new Vector3(0.055f,0.055f,0.055f), new Color(0.08f, 0.08f, 0.10f)),
+            ("RightEye",     PrimitiveType.Sphere,   new Vector3( 0.07f, 1.96f,  0.12f), Vector3.zero,             new Vector3(0.055f,0.055f,0.055f), new Color(0.08f, 0.08f, 0.10f)),
+            // Hard adds (22): detail sub-pieces — panels, shoulders, neck, antenna, hands, hip, bolts
+            ("ChestPlate",   PrimitiveType.Cube,     new Vector3( 0.00f, 1.56f,  0.115f), Vector3.zero,            new Vector3(0.24f, 0.22f, 0.03f), new Color(0.66f, 0.74f, 0.82f)),
+            ("BackPlate",    PrimitiveType.Cube,     new Vector3( 0.00f, 1.56f, -0.115f), Vector3.zero,            new Vector3(0.24f, 0.22f, 0.03f), new Color(0.48f, 0.55f, 0.62f)),
+            ("LeftShoulder", PrimitiveType.Sphere,   new Vector3(-0.26f, 1.66f,  0.00f), Vector3.zero,             new Vector3(0.12f, 0.12f, 0.12f), new Color(0.70f, 0.74f, 0.78f)),
+            ("RightShoulder",PrimitiveType.Sphere,   new Vector3( 0.26f, 1.66f,  0.00f), Vector3.zero,             new Vector3(0.12f, 0.12f, 0.12f), new Color(0.70f, 0.74f, 0.78f)),
+            ("Neck",         PrimitiveType.Cylinder, new Vector3( 0.00f, 1.74f,  0.00f), Vector3.zero,             new Vector3(0.09f, 0.05f, 0.09f), new Color(0.52f, 0.56f, 0.60f)),
+            ("Antenna",      PrimitiveType.Cylinder, new Vector3( 0.00f, 2.10f,  0.00f), Vector3.zero,             new Vector3(0.02f, 0.10f, 0.02f), new Color(0.85f, 0.40f, 0.30f)),
+            ("LeftHand",     PrimitiveType.Cube,     new Vector3(-0.62f, 1.22f,  0.00f), Vector3.zero,             new Vector3(0.09f, 0.09f, 0.09f), new Color(0.60f, 0.64f, 0.68f)),
+            ("RightHand",    PrimitiveType.Cube,     new Vector3( 0.62f, 1.22f,  0.00f), Vector3.zero,             new Vector3(0.09f, 0.09f, 0.09f), new Color(0.60f, 0.64f, 0.68f)),
+            ("Hip",          PrimitiveType.Cube,     new Vector3( 0.00f, 1.34f,  0.00f), Vector3.zero,             new Vector3(0.30f, 0.10f, 0.20f), new Color(0.46f, 0.50f, 0.54f)),
+            ("ChestBolt",    PrimitiveType.Sphere,   new Vector3( 0.00f, 1.49f,  0.15f), Vector3.zero,             new Vector3(0.05f, 0.05f, 0.05f), new Color(0.90f, 0.78f, 0.30f)),
+        };
+    }
+
+    /// Builds an editable robot root: one plain primitive child per part, named with a numeric
+    /// prefix ("01_Head" …). Visual only — the game build adds grab/physics/ghost. Caller owns it.
+    ///   rootName  — GameObject name (also the prefab key the smart-save matches on).
+    ///   maxPieces — seed only the first N parts (e.g. 5 Easy / 12 Medium / 22 Hard).
+    private static GameObject BuildRobotModelRoot(string rootName = "RobotModel", int maxPieces = int.MaxValue)
+    {
+        var root = new GameObject(rootName);
+        root.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+
+        int idx = 1;
+        foreach (var d in RobotPrimitiveDefs())
+        {
+            if (idx > maxPieces) break;
+            var go = GameObject.CreatePrimitive(d.p);
+            go.name = $"{idx:00}_{d.n}";
+            go.transform.SetParent(root.transform, worldPositionStays: true);
+            go.transform.position   = d.pos;
+            go.transform.rotation   = Quaternion.Euler(d.euler);
+            go.transform.localScale = d.scale;
+            go.GetComponent<Renderer>().sharedMaterial = GetOrCreateMat($"Piece_Robot_{d.n}", d.col);
+            idx++;
+        }
+        return root;
+    }
+
+    /// Sandbox scene: three editable robots (one per difficulty) standing on the floor, each beside
+    /// a height pole, plus an instruction panel. The helpers sit OUTSIDE the robot roots, so
+    /// "Save Robots → Prefabs" excludes them.
+    private static void BuildRobotAuthoringScene()
+    {
+        var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+
+        // Neutral lighting so shapes read clearly while editing.
+        AddDirectionalLight(new Color(1f, 0.98f, 0.95f), 1.0f, Quaternion.Euler(50f, -30f, 0f));
+        SetAmbientFlat(new Color(0.55f, 0.55f, 0.58f));
+
+        var helpers = new GameObject("— Authoring Helpers (not saved) —");
+
+        // Floor reference at y = 0 (a default plane is 10×10 m → scale ≈ width/10).
+        var floor = GameObject.CreatePrimitive(PrimitiveType.Plane);
+        floor.name = "FloorReference";
+        floor.transform.SetParent(helpers.transform, true);
+        floor.transform.position   = Vector3.zero;
+        floor.transform.localScale = new Vector3(0.9f, 1f, 0.4f);   // ≈ 9 × 4 m
+        floor.GetComponent<Renderer>().sharedMaterial = GetOrCreateMat("Auth_Floor", new Color(0.82f, 0.82f, 0.84f));
+
+        // Three editable robots side by side. Each is grounded on the floor with its own height pole.
+        SeedAuthoringRobot(helpers.transform, "RobotModel_Easy",   5,  -2.2f, "EASY");
+        SeedAuthoringRobot(helpers.transform, "RobotModel_Medium", 12,  0.0f, "MEDIUM");
+        var hard = SeedAuthoringRobot(helpers.transform, "RobotModel_Hard", 22, 2.2f, "HARD");
+        Selection.activeGameObject = hard;
+
+        BuildAuthoringInstructions(helpers.transform, new Vector3(0f, 2.7f, 1.6f), Vector3.zero);
+
+        EditorSceneManager.SaveScene(scene, k_RobotAuthScene);
+        AssetDatabase.Refresh();
+        Debug.Log($"[PuzzleSceneBuilder] Robot authoring scene ready → '{k_RobotAuthScene}'. " +
+                  "Edit the RobotModel_Easy/_Medium/_Hard roots, then run " +
+                  "Robot Authoring ▸ ② Save Robots → Prefabs.");
+    }
+
+    /// Builds one labelled editable robot, grounded on the floor at offsetX with a height pole that
+    /// matches its top. Grounding shifts only the ROOT (layout-only): the build resets the prefab
+    /// root to origin, so the in-game piece poses are unaffected. The label and pole are parented to
+    /// HELPERS (never the robot) so they can never become pieces.
+    private static GameObject SeedAuthoringRobot(Transform helpers, string rootName, int maxPieces,
+                                                 float offsetX, string label)
+    {
+        var robot = BuildRobotModelRoot(rootName, maxPieces);
+
+        // Drop the robot so its lowest point rests on the floor (y = 0).
+        var rends = robot.GetComponentsInChildren<Renderer>();
+        float footY = 0f, topY = 0f;
+        if (rends.Length > 0)
+        {
+            var b = rends[0].bounds;
+            for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+            footY = b.min.y; topY = b.max.y;
+        }
+        float height = Mathf.Max(0.01f, topY - footY);
+        robot.transform.position = new Vector3(offsetX, -footY, 0f);   // feet → 0; top → height
+
+        // Height pole beside the robot, spanning 0 → its top (a default cylinder is 2 m tall).
+        var pole = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        pole.name = $"HeightPole_{label}";
+        pole.transform.SetParent(helpers, true);
+        pole.transform.position   = new Vector3(offsetX - 0.6f, height * 0.5f, 0f);
+        pole.transform.localScale = new Vector3(0.012f, height * 0.5f, 0.012f);
+        pole.GetComponent<Renderer>().sharedMaterial = GetOrCreateMat("Auth_Pole", new Color(0.85f, 0.40f, 0.30f));
+        Object.DestroyImmediate(pole.GetComponent<Collider>());
+
+        // Floor label = difficulty only (piece count is whatever you leave in the prefab).
+        var labelGO = new GameObject($"Label_{label}");
+        labelGO.transform.SetParent(helpers, true);
+        labelGO.transform.SetPositionAndRotation(new Vector3(offsetX, topY - footY + 0.25f, 0f), Quaternion.identity);
+        var canvas = labelGO.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+        labelGO.AddComponent<CanvasScaler>();
+        var rt = labelGO.GetComponent<RectTransform>();
+        rt.sizeDelta  = new Vector2(300f, 70f);
+        rt.localScale = Vector3.one * 0.004f;
+        MakeUIText(labelGO.transform, "Text", label,
+                   Vector2.zero, new Vector2(300f, 70f), 32, new Color(0.95f, 0.95f, 0.55f));
+        return robot;
+    }
+
+    /// World-space instruction card for the authoring scene.
+    private static void BuildAuthoringInstructions(Transform parent, Vector3 worldPos, Vector3 euler)
+    {
+        var root = new GameObject("Instructions_Canvas");
+        root.transform.SetParent(parent, true);
+        root.transform.SetPositionAndRotation(worldPos, Quaternion.Euler(euler));
+
+        var canvas = root.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+        root.AddComponent<CanvasScaler>();
+
+        var rt = root.GetComponent<RectTransform>();
+        rt.sizeDelta  = new Vector2(760f, 580f);
+        rt.localScale = Vector3.one * 0.0024f;   // ≈ 1.8 m wide
+
+        var panel = MakePanel(root.transform, "Panel", new Color(0.10f, 0.10f, 0.12f, 0.92f));
+
+        MakeUIText(panel.transform, "Title", "ROBOT AUTHORING",
+                   new Vector2(0f, 250f), new Vector2(720f, 50f), 34, new Color(0.95f, 0.95f, 0.98f));
+
+        const string body =
+            "Three separate robots — one per difficulty:\n" +
+            "  <b>RobotModel_Easy / _Medium / _Hard</b>.\n\n" +
+            "Each is its OWN puzzle. The piece count shown in the\n" +
+            "game is just how many children that robot has —\n" +
+            "add or remove pieces freely.\n\n" +
+            "• Reshape a piece: move / scale it, or swap its mesh.\n" +
+            "• Add a piece: new child with a MeshRenderer\n" +
+            "   (one mesh + one material is cleanest).\n" +
+            "• Remove a piece: delete the child.\n\n" +
+            "Each robot stands on the floor (y = 0); the red pole\n" +
+            "beside it marks its height. You don't add\n" +
+            "colliders/ghosts — the build does that.\n\n" +
+            "When done:\n" +
+            "  Robot Authoring ▸ ② Save Robots → Prefabs\n" +
+            "  then a 'Prepare for APK Build…' menu to rebuild.";
+
+        var t = MakeUIText(panel.transform, "Body", body,
+                           new Vector2(0f, -25f), new Vector2(700f, 460f), 22, new Color(0.90f, 0.92f, 0.95f));
+        t.alignment = TextAlignmentOptions.TopLeft;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Prefab-driven puzzle set — splits a hand-authored model into pieces
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // The authored prefab is assembled (all pieces in their solved poses). Each DIRECT child
+    // becomes one grabbable piece: the child keeps its authored mesh/material (the nicer look),
+    // and the same shadow + snap-zone pipeline as the primitive robot is applied automatically.
+    // Difficulty order comes from the numeric name prefix ("01_Head", "02_Torso", …); children
+    // without a numeric prefix sort last (and keep their relative hierarchy order).
+
+    /// Resolves and builds each difficulty's piece set onto the PuzzleManager, then syncs the
+    /// per-difficulty pieceCount to the resolved counts (so the UI label reflects the prefab).
+    private static void BuildRobotPieceSets(PuzzleManager pm, Transform snapRoot)
+    {
+        var easyPf   = AssetDatabase.LoadAssetAtPath<GameObject>(k_RobotPrefabEasy);
+        var medPf    = AssetDatabase.LoadAssetAtPath<GameObject>(k_RobotPrefabMedium);
+        var hardPf   = AssetDatabase.LoadAssetAtPath<GameObject>(k_RobotPrefabHard);
+        var singlePf = AssetDatabase.LoadAssetAtPath<GameObject>(k_RobotPrefab);
+        bool anyPerDiff = easyPf != null || medPf != null || hardPf != null;
+
+        // Shared fallback list — only built if some level lacks its own prefab.
+        bool needShared = !anyPerDiff || easyPf == null || medPf == null || hardPf == null;
+        List<GameObject> shared = null;
+        if (needShared)
+        {
+            shared = singlePf != null
+                ? BuildPuzzlePiecesFromPrefab(singlePf, snapRoot)
+                : BuildPuzzlePieces(RobotPrimitiveDefs(), snapRoot);
+        }
+        pm.robotPieces = shared ?? new List<GameObject>();
+
+        if (!anyPerDiff)
+        {
+            // Legacy single-source mode: difficulties slice the shared list by pieceCount (unchanged).
+            pm.easyPieces = new List<GameObject>();
+            pm.mediumPieces = new List<GameObject>();
+            pm.hardPieces = new List<GameObject>();
+            Debug.Log(singlePf != null
+                ? $"[PuzzleSceneBuilder] Robot from single prefab '{k_RobotPrefab}' ({shared.Count} pieces); " +
+                  "difficulties use the first-N threshold."
+                : "[PuzzleSceneBuilder] No robot prefab found — built-in primitive robot (first-N threshold). " +
+                  $"Author per-difficulty prefabs (e.g. '{k_RobotPrefabEasy}') or a single '{k_RobotPrefab}'.");
+            return;
+        }
+
+        // Per-difficulty mode: each level uses its own prefab in full, or the shared first-N fallback.
+        pm.easyPieces   = ResolveLevelPieces(easyPf, snapRoot, shared, pm.easySettings.pieceCount);
+        pm.mediumPieces = ResolveLevelPieces(medPf,  snapRoot, shared, pm.mediumSettings.pieceCount);
+        pm.hardPieces   = ResolveLevelPieces(hardPf, snapRoot, shared, pm.hardSettings.pieceCount);
+
+        // Count shown in the UI = resolved piece count for each level.
+        pm.easySettings.pieceCount   = pm.easyPieces.Count;
+        pm.mediumSettings.pieceCount = pm.mediumPieces.Count;
+        pm.hardSettings.pieceCount   = pm.hardPieces.Count;
+
+        Debug.Log("[PuzzleSceneBuilder] Per-difficulty robots — " +
+                  $"Easy {pm.easyPieces.Count}" + (easyPf != null ? "" : " (fallback)") + ", " +
+                  $"Medium {pm.mediumPieces.Count}" + (medPf != null ? "" : " (fallback)") + ", " +
+                  $"Hard {pm.hardPieces.Count}" + (hardPf != null ? "" : " (fallback)") + " pieces.");
+    }
+
+    /// One level's pieces: its own prefab split in full, or the first-N slice of the shared list.
+    private static List<GameObject> ResolveLevelPieces(
+        GameObject levelPrefab, Transform snapRoot, List<GameObject> shared, int fallbackCount)
+    {
+        if (levelPrefab != null)
+            return BuildPuzzlePiecesFromPrefab(levelPrefab, snapRoot);
+
+        int n = Mathf.Clamp(fallbackCount, 0, shared != null ? shared.Count : 0);
+        return shared != null ? shared.GetRange(0, n) : new List<GameObject>();
+    }
+
+    private static List<GameObject> BuildPuzzlePiecesFromPrefab(GameObject prefab, Transform snapRoot)
+    {
+        // Instantiate + fully unpack so we can split the model into independent scene objects.
+        var husk = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+        PrefabUtility.UnpackPrefabInstance(husk, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
+        husk.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+        husk.transform.localScale = Vector3.one;
+
+        // Direct children = pieces, ordered by numeric name prefix for the difficulty ramp.
+        var children = new List<Transform>();
+        foreach (Transform c in husk.transform) children.Add(c);
+        children.Sort((a, b) =>
+        {
+            int oa = PiecePrefixOrder(a.name), ob = PiecePrefixOrder(b.name);
+            return oa != ob ? oa.CompareTo(ob) : a.GetSiblingIndex().CompareTo(b.GetSiblingIndex());
+        });
+
+        var allPieces = new List<GameObject>();
+        foreach (var child in children)
+        {
+            var pieceGO = MakePuzzlePieceFromObject(child.gameObject, snapRoot);
+            pieceGO.SetActive(false);   // inactive until the player selects a difficulty
+            allPieces.Add(pieceGO);
+        }
+
+        Object.DestroyImmediate(husk);  // empty husk — children were reparented out
+        return allPieces;
+    }
+
+    /// Leading integer of a piece name ("03_LeftArm" → 3). No prefix → int.MaxValue (sorts last).
+    private static int PiecePrefixOrder(string name)
+    {
+        int i = 0;
+        while (i < name.Length && char.IsDigit(name[i])) i++;
+        return i > 0 && int.TryParse(name.Substring(0, i), out var n) ? n : int.MaxValue;
+    }
+
+    /// "03_LeftArm" → "LeftArm"; "Torso" → "Torso".
+    private static string StripPiecePrefix(string name)
+    {
+        int i = 0;
+        while (i < name.Length && char.IsDigit(name[i])) i++;
+        if (i > 0 && i < name.Length && (name[i] == '_' || name[i] == '-')) i++;
+        return i > 0 && i <= name.Length ? name.Substring(i) : name;
+    }
+
+    /// Turn one authored child (kept as-is visually) into a grabbable piece + its ghost/snap zone.
+    private static GameObject MakePuzzlePieceFromObject(GameObject piece, Transform snapRoot)
+    {
+        string name      = StripPiecePrefix(piece.name);
+        Vector3 solvedPos = piece.transform.position;
+        Quaternion solvedRot = piece.transform.rotation;
+
+        // Detach from the husk → standalone piece keeping its authored world pose.
+        piece.transform.SetParent(null, worldPositionStays: true);
+        piece.name = $"Piece_Robot_{name}";
+
+        // ── Snap zone + ghost — clone the PRISTINE authored visuals before adding gameplay parts ─
+        var snapGO = new GameObject($"SnapZone_Robot_{name}");
+        snapGO.transform.SetParent(snapRoot, worldPositionStays: true);
+        snapGO.transform.SetPositionAndRotation(solvedPos, solvedRot);
+        snapGO.SetActive(false);    // hidden until puzzle starts
+
+        var ghost = Object.Instantiate(piece, snapGO.transform);
+        ghost.name = "Ghost";
+        ghost.transform.SetPositionAndRotation(solvedPos, solvedRot);
+        // Ghost is visual only — strip any authored colliders/bodies.
+        foreach (var col in ghost.GetComponentsInChildren<Collider>(true))  Object.DestroyImmediate(col);
+        foreach (var bod in ghost.GetComponentsInChildren<Rigidbody>(true)) Object.DestroyImmediate(bod);
+
+        var ghostIdle   = GetOrCreateMat("Ghost_Idle",   new Color(0.68f, 0.82f, 1.00f, 0.20f), transparent: true);
+        var ghostActive = GetOrCreateMat("Ghost_Active", new Color(0.48f, 0.88f, 1.00f, 0.45f), transparent: true);
+        var ghostRends  = ghost.GetComponentsInChildren<Renderer>(true);
+        foreach (var r in ghostRends)
+        {
+            r.sharedMaterial     = ghostIdle;
+            r.shadowCastingMode  = ShadowCastingMode.Off;
+            r.receiveShadows     = false;
+        }
+
+        // ── Piece gameplay components ───────────────────────────────────────
+        if (piece.GetComponentInChildren<Collider>(true) == null)
+        {
+            var mf = piece.GetComponent<MeshFilter>();
+            if (mf != null && mf.sharedMesh != null)
+            {
+                // Convex mesh collider so the authored shape can be grabbed and hits walls.
+                var mc = piece.AddComponent<MeshCollider>();
+                mc.convex = true;
+            }
+            else
+            {
+                // Mesh lives on child objects: approximate with a box over their bounds.
+                var rends = piece.GetComponentsInChildren<Renderer>(true);
+                if (rends.Length > 0)
+                {
+                    var b = rends[0].bounds;
+                    for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+                    var bc = piece.AddComponent<BoxCollider>();
+                    bc.center = piece.transform.InverseTransformPoint(b.center);
+                    var ls = piece.transform.lossyScale;
+                    bc.size = new Vector3(b.size.x / Mathf.Max(1e-4f, Mathf.Abs(ls.x)),
+                                          b.size.y / Mathf.Max(1e-4f, Mathf.Abs(ls.y)),
+                                          b.size.z / Mathf.Max(1e-4f, Mathf.Abs(ls.z)));
+                }
+            }
+        }
+
+        var rb = piece.GetComponent<Rigidbody>() ?? piece.AddComponent<Rigidbody>();
+        rb.mass          = 0.3f;
+        rb.interpolation = RigidbodyInterpolation.Interpolate;
+        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+
+        var grab = piece.AddComponent<XRGrabInteractable>();
+        grab.movementType = XRBaseInteractable.MovementType.VelocityTracking;
+
+        var pp = piece.AddComponent<PuzzlePiece>();
+        pp.solveThreshold = 0.05f;
+        pp.solvedMaterial = GetOrCreateMat("Piece_Solved", new Color(0.98f, 0.94f, 0.80f));
+
+        // ── Wire the snap zone ──────────────────────────────────────────────
+        var msz = snapGO.AddComponent<MagneticSnapZone>();
+        msz.linkedPiece         = pp;
+        msz.ghostRenderer       = ghostRends.Length > 0 ? ghostRends[0] : null;
+        msz.extraGhostRenderers = SubRenderers(ghostRends, 1);
+        msz.ghostIdleMaterial   = ghostIdle;
+        msz.ghostActiveMaterial = ghostActive;
+        msz.activationRange     = 0.15f;
+
+        pp.correctPlacementTarget = snapGO.transform;
+        return piece;
+    }
+
+    /// Slice of a renderer array from `start` to the end (empty if none) — no LINQ dependency.
+    private static Renderer[] SubRenderers(Renderer[] src, int start)
+    {
+        if (src == null || start >= src.Length) return System.Array.Empty<Renderer>();
+        var outArr = new Renderer[src.Length - start];
+        System.Array.Copy(src, start, outArr, 0, outArr.Length);
+        return outArr;
     }
 
     // ════════════════════════════════════════════════════════════════════════

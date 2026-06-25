@@ -20,6 +20,9 @@ public class MagneticSnapZone : MonoBehaviour
 
     [Header("Ghost Visual")]
     public Renderer ghostRenderer;
+    [Tooltip("Extra ghost renderers for multi-mesh prefab pieces. They share the same ghost " +
+             "material instance and toggle/animate together with ghostRenderer.")]
+    public Renderer[] extraGhostRenderers;
     public Material ghostIdleMaterial;
     public Material ghostActiveMaterial;
 
@@ -43,7 +46,14 @@ public class MagneticSnapZone : MonoBehaviour
     private void Awake()
     {
         if (ghostRenderer != null)
+        {
             _ghostMat = ghostRenderer.material;  // creates per-instance copy
+            // Multi-mesh pieces: point every extra renderer at the same instance so
+            // SetGhostAlpha / hint colour drive the whole silhouette at once.
+            if (extraGhostRenderers != null)
+                foreach (var r in extraGhostRenderers)
+                    if (r != null) r.sharedMaterial = _ghostMat;
+        }
 
         _baseIdleColor   = ghostIdleMaterial   != null ? ghostIdleMaterial.color   : new Color(0.65f, 0.80f, 1.00f, 0.20f);
         _baseActiveColor = ghostActiveMaterial != null ? ghostActiveMaterial.color : new Color(0.45f, 0.88f, 1.00f, 0.45f);
@@ -111,5 +121,8 @@ public class MagneticSnapZone : MonoBehaviour
     {
         if (ghostRenderer != null)
             ghostRenderer.enabled = visible;
+        if (extraGhostRenderers != null)
+            foreach (var r in extraGhostRenderers)
+                if (r != null) r.enabled = visible;
     }
 }
