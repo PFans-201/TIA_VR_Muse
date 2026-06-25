@@ -68,6 +68,7 @@ public class MuseStatusHUD : MonoBehaviour
     private bool       _expanded = true;
     private GameObject _expandedGO;
     private GameObject _minimizedGO;
+    private GameObject _infoGO;       // opaque "how each metric is computed" overlay
 
     // ── UI refs ───────────────────────────────────────────────────────────────
     private TextMeshProUGUI _statusLabel;
@@ -368,9 +369,13 @@ public class MuseStatusHUD : MonoBehaviour
 
         // Minimize "–" button (top-right of the title bar) → collapse to circle.
         var minBtn = MakeButton(titleBar, "MinimizeBtn", "–", new Color(0.30f, 0.34f, 0.45f));
-        var minRT  = minBtn.GetComponent<RectTransform>();
-        Pin(minRT, PanelW - 26, 2, 22, 22);
+        Pin(minBtn.GetComponent<RectTransform>(), PanelW - 26, 2, 22, 22);
         minBtn.onClick.AddListener(() => SetExpanded(false));
+
+        // Info "i" button (just left of minimize) → opens the metric-explanation overlay.
+        var infoBtn = MakeButton(titleBar, "InfoBtn", "i", new Color(0.22f, 0.40f, 0.55f));
+        Pin(infoBtn.GetComponent<RectTransform>(), PanelW - 50, 2, 22, 22);
+        infoBtn.onClick.AddListener(() => ShowInfo(true));
 
         // Status label
         var statusRT = MakeRect(panel, "Status");
@@ -414,6 +419,52 @@ public class MuseStatusHUD : MonoBehaviour
         _legendLabel.color     = new Color(0.65f, 0.68f, 0.75f, 1f);
         _legendLabel.alignment = TextAlignmentOptions.Center;
         _legendLabel.textWrappingMode = TextWrappingModes.NoWrap;
+
+        BuildInfoPanel(panel);   // opaque metric-explanation overlay (added last → drawn on top)
+    }
+
+    /// Opaque overlay that explains how each metric is computed. It fills the whole panel and is
+    /// fully opaque, so no HUD content shows through behind it. Toggled by the title-bar "i" button.
+    void BuildInfoPanel(Transform panelT)
+    {
+        _infoGO  = MakeRect(panelT, "InfoPanel").gameObject;
+        var rt   = (RectTransform)_infoGO.transform;
+        Stretch(rt);
+        _infoGO.AddComponent<Image>().color = new Color(0.04f, 0.05f, 0.09f, 1f);   // alpha = 1 → opaque
+
+        var title = AddTMP(rt, "InfoTitle");
+        Pin(title.GetComponent<RectTransform>(), 12, PanelH - 30, PanelW - 24, 22);
+        title.text      = "How each metric is computed";
+        title.fontSize  = 12f;
+        title.fontStyle = FontStyles.Bold;
+        title.color     = new Color(0.80f, 0.88f, 1f, 1f);
+        title.alignment = TextAlignmentOptions.Left;
+
+        var body = AddTMP(rt, "InfoBody");
+        Pin(body.GetComponent<RectTransform>(), 14, 30, PanelW - 28, PanelH - 64);
+        body.fontSize  = 8.6f;
+        body.color     = new Color(0.86f, 0.88f, 0.92f, 1f);
+        body.alignment = TextAlignmentOptions.TopLeft;
+        body.textWrappingMode = TextWrappingModes.Normal;
+        body.text =
+            "All three are measured against your active-VR baseline and squashed to 0–1 (sigmoid). " +
+            "<b>0.50 = same as baseline</b>; higher = more.  (z = std-devs above baseline.)\n\n" +
+            "<color=#33E04D><b>Stress</b></color> = sigmoid((βz − αz)/2) — rises as beta/arousal goes up and alpha drops.\n\n" +
+            "<color=#FF9426><b>Cognitive load</b></color> = sigmoid((θz − αz)/2) — rises as frontal theta goes up and alpha drops.\n\n" +
+            "<color=#489EFF><b>Attention</b></color> = sigmoid((βz − θz)/2) — the inverse Theta/Beta Ratio. " +
+            "TBR = theta/beta; a LOW TBR (theta down, beta up) means focus, so attention rises as the TBR falls.\n\n" +
+            "<i>Bands used: θ theta, α alpha, β beta (delta & gamma are not used).</i>";
+
+        var close = MakeButton(rt, "InfoClose", "Close", new Color(0.40f, 0.44f, 0.52f));
+        Pin(close.GetComponent<RectTransform>(), PanelW - 84, 6, 74, 20);
+        close.onClick.AddListener(() => ShowInfo(false));
+
+        _infoGO.SetActive(false);
+    }
+
+    void ShowInfo(bool on)
+    {
+        if (_infoGO != null) _infoGO.SetActive(on);
     }
 
     void BuildMinimized(Transform rootT)
@@ -447,6 +498,7 @@ public class MuseStatusHUD : MonoBehaviour
     void SetExpanded(bool on)
     {
         _expanded = on;
+        if (_infoGO != null) _infoGO.SetActive(false);   // always start from the data view
         if (_expandedGO  != null) _expandedGO.SetActive(on);
         if (_minimizedGO != null) _minimizedGO.SetActive(!on);
         if (on) { RefreshStatus(); RedrawGraph(); }

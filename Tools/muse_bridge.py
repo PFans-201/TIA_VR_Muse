@@ -177,16 +177,18 @@ def indices_from_z(z, sensitivity):
     same sigmoid(raw / sensitivity) so they share one axis. All are measured ABOVE the
     committed (active-VR) baseline, i.e. 0.5 == "same as baseline".
         cognitive_load : (theta_z - alpha_z)/2   frontal theta up, alpha down  (== legacy "stress")
-        attention      : (beta_z - (alpha_z+theta_z)/2)/2   Pope engagement index
+        attention      : (beta_z - theta_z)/2    inverse Theta/Beta Ratio — a LOW theta/beta ratio
+                                                 (theta down, beta up) means focused attention, so
+                                                 this index rises as the TBR falls.
         stress         : (beta_z - alpha_z)/2    beta/arousal up, alpha down
     Returns a dict of the three RAW (un-smoothed) 0..1 values plus the contributing z-scores."""
     theta_z, alpha_z, beta_z = z[THETA], z[ALPHA], z[BETA]
     cli   = (theta_z - alpha_z) / 2.0
-    eng   = (beta_z - (alpha_z + theta_z) / 2.0) / 2.0
+    focus = (beta_z - theta_z) / 2.0          # inverse theta/beta ratio (TBR) — high = focused
     arous = (beta_z - alpha_z) / 2.0
     return {
         "cognitive_load": sigmoid(cli   / sensitivity),
-        "attention":      sigmoid(eng   / sensitivity),
+        "attention":      sigmoid(focus / sensitivity),
         "stress":         sigmoid(arous / sensitivity),
         "theta_z": theta_z, "alpha_z": alpha_z, "beta_z": beta_z, "cli": cli,
     }
