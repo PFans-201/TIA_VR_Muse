@@ -1,29 +1,31 @@
-using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using UnityEngine.XR.Interaction.Toolkit.UI;
 using TMPro;
 
-/// Self-contained Muse debug overlay for VR (Quest).
+/// Self-contained, MOVABLE Muse debug overlay for VR (Quest).
 ///
-/// Drop on any GameObject in the scene (it creates its own World Space canvas
-/// as a child of Camera.main at runtime, so no manual scene wiring needed).
+/// Drop on any GameObject in the scene — at runtime it builds its own free-standing World Space
+/// window in front of the camera (not head-locked, so you can drag it where you like).
 ///
-/// Phase-aware — it shows different data while calibrating vs while playing:
-///   • Connection status dot  (orange=scanning, yellow=connecting, green=streaming, red=error)
-///   • During the BASELINES    raw band-power bars (δ θ α β γ) + signal-quality, since there are
-///                             no standardized indices yet (it's still measuring the reference).
-///   • During GAMEPLAY         the three standardized 0–1 indices: stress, cognitive load,
-///                             attention (scrolling graph + numeric readout). Raw z-scores are
-///                             intentionally not surfaced here.
+/// Window controls:
+///   • Drag the title bar (or the minimized circle) with the controller ray to reposition it.
+///   • The "–" button in the title bar collapses the window to a small circle.
+///   • Click the circle to open the window again.
 ///
-/// Position: inspector field hudPosition (local camera coords, default bottom-right).
+/// Phase-aware content:
+///   • During the BASELINES  bars of just the brain-wave bands we actually use to compute the
+///                           indices — θ (theta), α (alpha), β (beta) — each a distinct colour,
+///                           plus signal quality. (No standardized indices exist yet.)
+///   • During GAMEPLAY       the three standardized 0–1 indices as connected LINE plots, like the
+///                           PC plot: stress, cognitive load, attention. Raw z-scores are hidden.
 public class MuseStatusHUD : MonoBehaviour
 {
     // ── Inspector ─────────────────────────────────────────────────────────────
-    [Header("VR Position (camera-local metres)")]
-    [Tooltip("Where to place the HUD relative to the headset camera. " +
-             "X+ = right, Y- = down, Z+ = forward.")]
-    public Vector3 hudPosition = new Vector3(0.30f, -0.20f, 0.65f);
+    [Header("Initial placement (camera-local metres at spawn)")]
+    [Tooltip("Where the window first appears relative to the headset. You can drag it afterwards.")]
+    public Vector3 spawnOffset = new Vector3(0.30f, -0.20f, 0.65f);
 
     [Tooltip("World-scale per canvas pixel. 0.0008 ≈ 37 cm wide panel at 65 cm depth.")]
     public float hudScale = 0.0008f;
@@ -37,6 +39,7 @@ public class MuseStatusHUD : MonoBehaviour
     private const int PanelH  = 210;
     private const int GraphW  = 454;
     private const int GraphH  = 90;
+    private const int CircleD  = 90;   // minimized-circle diameter (px)
 
     // ── Ring buffers for the gameplay graph (the three standardized 0–1 indices) ──
     private readonly float[] _sBuf = new float[GraphW];  // stress
@@ -48,10 +51,23 @@ public class MuseStatusHUD : MonoBehaviour
     private int   _buildRetries;
     private const int MaxBuildRetries = 10;  // 10 × 0.5s = 5s max wait for Camera.main
 
-    // Baseline (calibration) state — no standardized indices yet, so we show live raw bands.
+    // Baseline (calibration) state — only the bands used by the indices: θ, α, β.
     private bool _baselineMode;
-    private readonly float[] _bandsDisp = new float[5];   // δ θ α β γ raw band powers
-    private static readonly string[] k_BandNames = { "δ", "θ", "α", "β", "γ" };
+    private readonly float[] _bandsDisp = new float[5];   // δ θ α β γ raw band powers (full packet)
+    // _bandsDisp indices that feed the metrics: 1 θ, 2 α, 3 β (0 δ and 4 γ are unused → not shown).
+    private static readonly int[]     k_UsedBandIdx  = { 1, 2, 3 };
+    private static readonly string[]  k_UsedBandName = { "θ", "α", "β" };
+    private static readonly Color32[] k_UsedBandCol  =
+    {
+        new Color32(150, 120, 255, 255),   // θ theta — violet
+        new Color32( 52, 205, 140, 255),   // α alpha — green
+        new Color32(255, 150,  60, 255),   // β beta  — orange
+    };
+
+    // ── Window state ────────────────────────────────────────────────────────────
+    private bool       _expanded = true;
+    private GameObject _expandedGO;
+    private GameObject _minimizedGO;
 
     // ── UI refs ───────────────────────────────────────────────────────────────
     private TextMeshProUGUI _statusLabel;
@@ -66,7 +82,6 @@ public class MuseStatusHUD : MonoBehaviour
     static readonly Color32 CGreen  = new Color32( 48, 210,  88, 255);   // stress
     static readonly Color32 COrange = new Color32(255, 148,  38, 255);   // cognitive load
     static readonly Color32 CBlue   = new Color32( 72, 158, 255, 255);   // attention
-    static readonly Color32 CBand   = new Color32(120, 200, 160, 255);   // baseline band bars
 
     const string HexScan  = "#FF8020";
     const string HexConn  = "#FFD91A";
@@ -76,24 +91,21 @@ public class MuseStatusHUD : MonoBehaviour
     // ─────────────────────────────────────────────────────────────────────────
     private void Start()
     {
-        // Texture for the graph
-        _tex = new Texture2D(GraphW, GraphH, TextureFormat.RGBA32, false)
-            { filterMode = FilterMode.Point };
+        _tex = new Texture2D(GraphW, GraphH, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point };
         ClearTex();
-
         BuildHUD();
     }
 
     private void Update()
     {
-        RefreshStatus();
+        if (_expanded) RefreshStatus();
 
         _sampleTimer += Time.deltaTime;
         if (_sampleTimer >= sampleInterval)
         {
             _sampleTimer = 0f;
             AddSample();
-            RedrawGraph();
+            if (_expanded) RedrawGraph();
         }
     }
 
@@ -102,7 +114,6 @@ public class MuseStatusHUD : MonoBehaviour
     {
         if (_statusLabel == null) return;
 
-        // Try direct BLE adapter first; fall back to UDP adapter (WiFi mode)
         var mda = MuseDirectAdapter.Instance;
         var udp = MuseUdpAdapter.Instance;
         if (mda == null && udp == null)
@@ -111,7 +122,6 @@ public class MuseStatusHUD : MonoBehaviour
             return;
         }
 
-        // Prefer UDP if actively receiving, otherwise prefer Direct BLE, else UDP
         string status;
         float stressLevel = 0.5f;
         bool contact = false;
@@ -119,20 +129,13 @@ public class MuseStatusHUD : MonoBehaviour
 
         if (useUdp)
         {
-            status = udp.Status;
-            stressLevel = udp.StressLevel;
-            contact = udp.Receiving;
+            status = udp.Status; stressLevel = udp.StressLevel; contact = udp.Receiving;
         }
         else if (mda != null)
         {
-            status = mda.Status;
-            stressLevel = mda.StressLevel;
-            contact = mda.Contact;
+            status = mda.Status; stressLevel = mda.StressLevel; contact = mda.Contact;
         }
-        else
-        {
-            status = "No adapter";
-        }
+        else { status = "No adapter"; }
 
         string hex;
         if      (status.Contains("streaming"))                                       hex = HexOK;
@@ -164,7 +167,7 @@ public class MuseStatusHUD : MonoBehaviour
         var udp = MuseUdpAdapter.Instance;
         bool useUdp = udp != null && (udp.Receiving || mda == null);
 
-        // ── Baseline calibration: no standardized indices yet → show live raw bands ──
+        // ── Baseline calibration: no standardized indices yet → show live raw bands (θ α β) ──
         _baselineMode = useUdp && udp.IsBaselinePhase;
         if (_baselineMode)
         {
@@ -180,8 +183,12 @@ public class MuseStatusHUD : MonoBehaviour
                     $"signal: {(contact ? $"<color={HexOK}><b>good ✓</b></color>" : $"<color={HexErr}><b>poor ✗</b></color>")}";
             }
             if (_legendLabel != null)
+            {
+                string c0 = ColorHex(k_UsedBandCol[0]), c1 = ColorHex(k_UsedBandCol[1]), c2 = ColorHex(k_UsedBandCol[2]);
                 _legendLabel.text =
-                    $"<color=#78C8A0>■</color> live brain-wave bands (δ θ α β γ) — stay still and relaxed";
+                    $"<color={c0}>■</color> θ theta    <color={c1}>■</color> α alpha    " +
+                    $"<color={c2}>■</color> β beta    (bands used for the metrics)";
+            }
             return;
         }
 
@@ -240,7 +247,7 @@ public class MuseStatusHUD : MonoBehaviour
             for (int x = 0; x < GraphW; x += 60)
                 for (int y = 0; y < GraphH; y++) px[y * GraphW + x] = CGrid;
 
-            // Plot the three indices (back to front so stress reads on top)
+            // Connected LINE plots (back to front so stress reads on top), like the PC plot.
             PlotLine(px, _aBuf, CBlue);     // attention
             PlotLine(px, _cBuf, COrange);   // cognitive load
             PlotLine(px, _sBuf, CGreen);    // stress
@@ -250,40 +257,40 @@ public class MuseStatusHUD : MonoBehaviour
         _tex.Apply();
     }
 
-    // ── Baseline band bars ──────────────────────────────────────────────────────
-    /// Draws the five raw band powers (δ θ α β γ) as live bars, each normalised to the loudest
-    /// band so the display clearly shows brain-wave activity (and is flat when there's no signal).
+    // ── Baseline band bars (θ α β only, each its own colour) ─────────────────────
     void RedrawBars(Color32[] px)
     {
         float max = 1e-6f;
-        for (int i = 0; i < 5; i++) max = Mathf.Max(max, _bandsDisp[i]);
+        foreach (int bi in k_UsedBandIdx) max = Mathf.Max(max, _bandsDisp[bi]);
 
-        const int n = 5;
-        int gap   = 6;
-        int barW  = (GraphW - gap * (n + 1)) / n;
-        for (int bi = 0; bi < n; bi++)
+        int n    = k_UsedBandIdx.Length;
+        int gap  = 14;
+        int barW = (GraphW - gap * (n + 1)) / n;
+        for (int k = 0; k < n; k++)
         {
-            float norm = Mathf.Clamp01(_bandsDisp[bi] / max);
+            float norm = Mathf.Clamp01(_bandsDisp[k_UsedBandIdx[k]] / max);
             int   h    = Mathf.RoundToInt(norm * (GraphH - 2));
-            int   x0   = gap + bi * (barW + gap);
+            int   x0   = gap + k * (barW + gap);
+            Color32 col = k_UsedBandCol[k];
             for (int x = x0; x < x0 + barW && x < GraphW; x++)
                 for (int y = 0; y < h; y++)
-                    px[y * GraphW + x] = CBand;
+                    px[y * GraphW + x] = col;
         }
     }
 
+    /// Draws a CONNECTED line for a ring buffer: each column fills the pixels between the previous
+    /// sample's height and this one's, so consecutive samples join into a continuous line (not dots).
     void PlotLine(Color32[] px, float[] buf, Color32 col)
     {
-        Color32 dim = new Color32(
-            (byte)(col.r >> 1), (byte)(col.g >> 1), (byte)(col.b >> 1), col.a);
-
+        int prevY = -1;
         for (int x = 0; x < GraphW; x++)
         {
             int idx = (_head + x) % GraphW;
             int y   = Mathf.Clamp(Mathf.RoundToInt(buf[idx] * (GraphH - 1)), 0, GraphH - 1);
-            px[y * GraphW + x] = col;
-            if (y + 1 < GraphH) px[(y + 1) * GraphW + x] = dim;
-            if (y - 1 >= 0)     px[(y - 1) * GraphW + x] = dim;
+            if (prevY < 0) prevY = y;
+            int lo = Mathf.Min(prevY, y), hi = Mathf.Max(prevY, y);
+            for (int yy = lo; yy <= hi; yy++) px[yy * GraphW + x] = col;
+            prevY = y;
         }
     }
 
@@ -295,23 +302,17 @@ public class MuseStatusHUD : MonoBehaviour
         _tex.Apply();
     }
 
-    // ── Canvas builder ────────────────────────────────────────────────────────
+    // ── Canvas builder (free-standing, draggable window) ────────────────────────
     void BuildHUD()
     {
         Camera cam = Camera.main;
-        if (cam == null && Camera.allCamerasCount > 0)
-        {
-            cam = Camera.allCameras[0];
-        }
+        if (cam == null && Camera.allCamerasCount > 0) cam = Camera.allCameras[0];
 
         if (cam == null)
         {
-            _buildRetries++;
-            if (_buildRetries >= MaxBuildRetries)
+            if (++_buildRetries >= MaxBuildRetries)
             {
-                Debug.LogError("[MuseStatusHUD] Camera not found after " +
-                               $"{MaxBuildRetries} retries — HUD disabled. " +
-                               "Make sure there is an active Camera in the scene.");
+                Debug.LogError("[MuseStatusHUD] Camera not found — HUD disabled. Ensure an active Camera exists.");
                 enabled = false;
                 return;
             }
@@ -319,42 +320,59 @@ public class MuseStatusHUD : MonoBehaviour
             return;
         }
 
-        // ── Root: World Space canvas, child of camera ──────────────────────
+        // ── Root: free-standing World Space canvas placed in front of the camera (NOT parented to
+        //    it, so it can be dragged and stays put). Raycasters let the controller ray drag/click.
         var root = new GameObject("MuseHUD");
-        root.transform.SetParent(cam.transform, worldPositionStays: false);
-        root.transform.localPosition = hudPosition;
-        root.transform.localRotation = Quaternion.identity;
-        root.transform.localScale    = Vector3.one * hudScale;
+        var camT = cam.transform;
+        root.transform.position = camT.position + camT.rotation * spawnOffset;
+        root.transform.rotation = camT.rotation;
+        root.transform.localScale = Vector3.one * hudScale;
 
         var canvas = root.AddComponent<Canvas>();
         canvas.renderMode = RenderMode.WorldSpace;
         root.AddComponent<CanvasScaler>().dynamicPixelsPerUnit = 1f;
-        // Note: GraphicRaycaster is NOT added — it's a no-op in VR without OVR/XR raycaster integration.
+        root.AddComponent<GraphicRaycaster>();
+        root.AddComponent<TrackedDeviceGraphicRaycaster>();   // controller-ray clicks/drags in VR
+        root.GetComponent<RectTransform>().sizeDelta = new Vector2(PanelW, PanelH);
 
-        var rootRT = root.GetComponent<RectTransform>();
-        rootRT.sizeDelta = new Vector2(PanelW, PanelH);
+        EnsureEventSystem();
 
-        // ── Panel (dark glass background) ─────────────────────────────────
-        var panel = MakeRect(root.transform, "Panel");
+        BuildExpanded(root.transform);
+        BuildMinimized(root.transform);
+        SetExpanded(true);
+    }
+
+    void BuildExpanded(Transform rootT)
+    {
+        _expandedGO = MakeRect(rootT, "Expanded").gameObject;
+        Stretch((RectTransform)_expandedGO.transform);
+
+        var panel = MakeRect(_expandedGO.transform, "Panel");
         Stretch(panel);
         panel.gameObject.AddComponent<Image>().color = new Color(0.06f, 0.07f, 0.12f, 0.93f);
 
-        // ── Title bar ─────────────────────────────────────────────────────
+        // Title bar — also the DRAG handle for the whole window.
         var titleBar = MakeRect(panel, "TitleBar");
         Pin(titleBar, 0, PanelH - 26, PanelW, 26);
-        var titleImg = titleBar.gameObject.AddComponent<Image>();
-        titleImg.color = new Color(0.10f, 0.12f, 0.20f, 1f);
+        titleBar.gameObject.AddComponent<Image>().color = new Color(0.10f, 0.12f, 0.20f, 1f);
+        titleBar.gameObject.AddComponent<HudDragHandle>().target = rootT;
 
         var titleTxt = AddTMP(titleBar, "TitleText");
         Stretch(titleTxt.GetComponent<RectTransform>());
-        titleTxt.text      = "  🧠  MUSE DEBUG HUD";
+        titleTxt.text      = "  🧠  MUSE   (drag to move)";
         titleTxt.fontSize  = 10.5f;
         titleTxt.fontStyle = FontStyles.Bold;
         titleTxt.color     = new Color(0.75f, 0.85f, 1.00f, 1f);
         titleTxt.alignment = TextAlignmentOptions.Left;
         titleTxt.textWrappingMode = TextWrappingModes.NoWrap;
 
-        // ── Status label ──────────────────────────────────────────────────
+        // Minimize "–" button (top-right of the title bar) → collapse to circle.
+        var minBtn = MakeButton(titleBar, "MinimizeBtn", "–", new Color(0.30f, 0.34f, 0.45f));
+        var minRT  = minBtn.GetComponent<RectTransform>();
+        Pin(minRT, PanelW - 26, 2, 22, 22);
+        minBtn.onClick.AddListener(() => SetExpanded(false));
+
+        // Status label
         var statusRT = MakeRect(panel, "Status");
         Pin(statusRT, 8, PanelH - 52, PanelW - 16, 22);
         _statusLabel = AddTMP(statusRT, "StatusText");
@@ -363,22 +381,18 @@ public class MuseStatusHUD : MonoBehaviour
         _statusLabel.fontSize = 10f;
         _statusLabel.color    = Color.white;
         _statusLabel.textWrappingMode = TextWrappingModes.NoWrap;
-        _statusLabel.overflowMode       = TextOverflowModes.Ellipsis;
-        _statusLabel.alignment          = TextAlignmentOptions.Left;
+        _statusLabel.overflowMode     = TextOverflowModes.Ellipsis;
+        _statusLabel.alignment        = TextAlignmentOptions.Left;
 
-        // ── Thin divider ──────────────────────────────────────────────────
         var divRT = MakeRect(panel, "Divider");
         Pin(divRT, 8, PanelH - 56, PanelW - 16, 1);
-        var divImg = divRT.gameObject.AddComponent<Image>();
-        divImg.color = new Color(1f, 1f, 1f, 0.12f);
+        divRT.gameObject.AddComponent<Image>().color = new Color(1f, 1f, 1f, 0.12f);
 
-        // ── Graph ─────────────────────────────────────────────────────────
         var graphRT = MakeRect(panel, "Graph");
         Pin(graphRT, 8, PanelH - 56 - GraphH - 4, GraphW, GraphH);
         _graphImg         = graphRT.gameObject.AddComponent<RawImage>();
         _graphImg.texture = _tex;
 
-        // ── Numeric readout ───────────────────────────────────────────────
         var valRT = MakeRect(panel, "Values");
         Pin(valRT, 8, 30, PanelW - 16, 18);
         _valuesLabel = AddTMP(valRT, "ValuesText");
@@ -387,14 +401,13 @@ public class MuseStatusHUD : MonoBehaviour
         _valuesLabel.fontSize  = 8.5f;
         _valuesLabel.color     = new Color(0.85f, 0.85f, 0.85f, 1f);
         _valuesLabel.textWrappingMode = TextWrappingModes.NoWrap;
-        _valuesLabel.alignment          = TextAlignmentOptions.Left;
+        _valuesLabel.alignment        = TextAlignmentOptions.Left;
 
-        // ── Legend ────────────────────────────────────────────────────────
         var legRT = MakeRect(panel, "Legend");
         Pin(legRT, 8, 12, PanelW - 16, 16);
         _legendLabel = AddTMP(legRT, "LegendText");
         Stretch(_legendLabel.GetComponent<RectTransform>());
-        _legendLabel.text =                   // replaced live by AddSample once data arrives
+        _legendLabel.text =
             $"<color={HexOK}>■</color> Stress    <color=#FF9426>■</color> Cognitive load    " +
             "<color=#489EFF>■</color> Attention    grid = 30 s  (0–1)";
         _legendLabel.fontSize  = 8f;
@@ -403,9 +416,76 @@ public class MuseStatusHUD : MonoBehaviour
         _legendLabel.textWrappingMode = TextWrappingModes.NoWrap;
     }
 
+    void BuildMinimized(Transform rootT)
+    {
+        _minimizedGO = MakeRect(rootT, "Minimized").gameObject;
+        var rt = (RectTransform)_minimizedGO.transform;
+        rt.anchorMin = rt.anchorMax = new Vector2(0.5f, 0.5f);
+        rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.anchoredPosition = Vector2.zero;
+        rt.sizeDelta = new Vector2(CircleD, CircleD);
+
+        // The circle is both a drag handle and a button (click → expand).
+        var img = _minimizedGO.AddComponent<Image>();
+        img.color  = new Color(0.12f, 0.16f, 0.26f, 0.96f);
+        img.sprite = CircleSprite();   // procedural so it stays round in a build
+        img.type   = Image.Type.Simple;
+
+        _minimizedGO.AddComponent<HudDragHandle>().target = rootT;
+        var btn = _minimizedGO.AddComponent<Button>();
+        btn.targetGraphic = img;
+        btn.onClick.AddListener(() => SetExpanded(true));
+
+        var lbl = AddTMP(rt, "Icon");
+        Stretch(lbl.GetComponent<RectTransform>());
+        lbl.text      = "🧠";
+        lbl.fontSize  = 34f;
+        lbl.alignment = TextAlignmentOptions.Center;
+        lbl.color     = new Color(0.80f, 0.88f, 1f, 1f);
+    }
+
+    void SetExpanded(bool on)
+    {
+        _expanded = on;
+        if (_expandedGO  != null) _expandedGO.SetActive(on);
+        if (_minimizedGO != null) _minimizedGO.SetActive(!on);
+        if (on) { RefreshStatus(); RedrawGraph(); }
+    }
+
     // ── Layout helpers ────────────────────────────────────────────────────────
 
-    /// Create an empty RectTransform child.
+    static void EnsureEventSystem()
+    {
+        if (Object.FindFirstObjectByType<EventSystem>(FindObjectsInactive.Include) == null)
+            new GameObject("EventSystem").AddComponent<EventSystem>();
+    }
+
+    private static Sprite _circleSprite;
+    /// A procedurally-generated soft-edged white circle sprite (tinted by the Image colour), so the
+    /// minimized toggle is round in a build without depending on Editor-only built-in sprites.
+    static Sprite CircleSprite()
+    {
+        if (_circleSprite != null) return _circleSprite;
+        const int d = 64;
+        var tex = new Texture2D(d, d, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+        float r = d / 2f - 1f;
+        var c   = new Vector2(d / 2f, d / 2f);
+        var px  = new Color32[d * d];
+        for (int y = 0; y < d; y++)
+            for (int x = 0; x < d; x++)
+            {
+                float dist = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), c);
+                float a    = Mathf.Clamp01(r - dist);   // ~1 px anti-aliased edge
+                px[y * d + x] = new Color32(255, 255, 255, (byte)(a * 255));
+            }
+        tex.SetPixels32(px);
+        tex.Apply();
+        _circleSprite = Sprite.Create(tex, new Rect(0, 0, d, d), new Vector2(0.5f, 0.5f));
+        return _circleSprite;
+    }
+
+    static string ColorHex(Color32 c) => $"#{c.r:X2}{c.g:X2}{c.b:X2}";
+
     static RectTransform MakeRect(Transform parent, string name)
     {
         var go = new GameObject(name);
@@ -413,37 +493,77 @@ public class MuseStatusHUD : MonoBehaviour
         return go.AddComponent<RectTransform>();
     }
 
-    /// Pin to bottom-left corner with absolute pixel coords.
     static void Pin(RectTransform rt, float x, float y, float w, float h)
     {
-        rt.anchorMin        = Vector2.zero;
-        rt.anchorMax        = Vector2.zero;
-        rt.pivot            = new Vector2(0f, 0f);
+        rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.zero; rt.pivot = Vector2.zero;
         rt.anchoredPosition = new Vector2(x, y);
         rt.sizeDelta        = new Vector2(w, h);
     }
 
-    /// Stretch to fill parent.
     static void Stretch(RectTransform rt)
     {
-        rt.anchorMin = Vector2.zero;
-        rt.anchorMax = Vector2.one;
-        rt.offsetMin = Vector2.zero;
-        rt.offsetMax = Vector2.zero;
+        rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one;
+        rt.offsetMin = Vector2.zero; rt.offsetMax = Vector2.zero;
     }
 
-    /// Add a TextMeshProUGUI component on a child of parent (RectTransform).
-    /// Note: TextMeshProUGUI already requires a RectTransform — do NOT add one manually first.
     static TextMeshProUGUI AddTMP(RectTransform parent, string name)
     {
         var go = new GameObject(name);
         go.transform.SetParent(parent, worldPositionStays: false);
-        // TextMeshProUGUI.Awake adds RectTransform automatically — don't add it beforehand.
-        return go.AddComponent<TextMeshProUGUI>();
+        return go.AddComponent<TextMeshProUGUI>();   // adds its own RectTransform
+    }
+
+    static Button MakeButton(Transform parent, string name, string label, Color color)
+    {
+        var go = new GameObject(name);
+        go.transform.SetParent(parent, worldPositionStays: false);
+        go.AddComponent<RectTransform>();
+        var img = go.AddComponent<Image>();
+        img.color = color;
+        var btn = go.AddComponent<Button>();
+        btn.targetGraphic = img;
+        var lbl = AddTMP(go.GetComponent<RectTransform>(), "Label");
+        Stretch(lbl.GetComponent<RectTransform>());
+        lbl.text = label; lbl.fontSize = 14f; lbl.fontStyle = FontStyles.Bold;
+        lbl.alignment = TextAlignmentOptions.Center; lbl.color = Color.white;
+        return btn;
     }
 
     private void OnDestroy()
     {
         if (_tex != null) Destroy(_tex);
+    }
+}
+
+/// Drags the assigned target transform with the controller ray (or mouse in the Editor). Attach to
+/// any UI Graphic that should act as a window grab handle; it moves <see cref="target"/> so the
+/// grabbed point stays under the pointer, and keeps the window facing the camera.
+public class HudDragHandle : MonoBehaviour, IBeginDragHandler, IDragHandler
+{
+    [Tooltip("The transform to move (the HUD window root). Defaults to this object if unset.")]
+    public Transform target;
+
+    private Vector3 _offset;
+    private bool    _hasOffset;
+
+    public void OnBeginDrag(PointerEventData e)
+    {
+        var t = target != null ? target : transform;
+        if (e.pointerCurrentRaycast.isValid)
+        {
+            _offset = t.position - e.pointerCurrentRaycast.worldPosition;
+            _hasOffset = true;
+        }
+        else _hasOffset = false;
+    }
+
+    public void OnDrag(PointerEventData e)
+    {
+        if (!_hasOffset || !e.pointerCurrentRaycast.isValid) return;
+        var t = target != null ? target : transform;
+        t.position = e.pointerCurrentRaycast.worldPosition + _offset;
+
+        var cam = Camera.main;
+        if (cam != null) t.rotation = Quaternion.LookRotation(t.position - cam.transform.position);
     }
 }
