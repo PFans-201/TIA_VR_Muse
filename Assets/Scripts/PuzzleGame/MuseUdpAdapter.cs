@@ -41,7 +41,7 @@ public class MuseUdpAdapter : MonoBehaviour, IMuseBaselineControl
 
     [Header("Control channel (to the bridge's --unity baseline state machine)")]
     [Tooltip("Host the Python bridge runs on (usually localhost).")]
-    public string bridgeHost = "127.0.0.1";
+    public string bridgeHost = "172.20.10.2";
     [Tooltip("Port the bridge listens on for baseline commands (--control-port). Default 5006.")]
     public int controlPort = 5006;
 
