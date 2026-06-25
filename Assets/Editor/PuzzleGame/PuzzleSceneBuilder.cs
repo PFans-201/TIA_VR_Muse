@@ -299,6 +299,194 @@ public static class PuzzleSceneBuilder
         else Debug.LogError($"[PuzzleSceneBuilder] Failed to write placeholder '{path}'.");
     }
 
+    // ── Obstacle authoring workflow ─────────────────────────────────────────────
+    // Hand-arrange the Hard-mode obstacle field instead of editing coordinates in code. The
+    // loop mirrors robot authoring:
+    //   ① open a sandbox that REPLICATES the hard room (room + central table + a faint, non-saved
+    //      robot ghost for reference) and seeds the editable "HardObstacles" root from the current
+    //      layout — drag / scale / add / delete obstacles by hand. The robot is NOT part of what's
+    //      saved, so you can also re-spot it later via Robot Authoring without disturbing this.
+    //   ② save the "HardObstacles" root to its prefab.
+    //   ↻ then run a normal "Prepare for APK Build…" — BuildHardObstacles() uses the prefab.
+
+    /// Opens a sandbox scene that replicates the Hard room (lit so you can see) with the central
+    /// puzzle table and a faint reference of the Hard robot, plus an editable "HardObstacles" root
+    /// seeded from the current layout. Drag the obstacles where you want them.
+    [MenuItem("Puzzle Game/Obstacle Authoring/① Open Authoring Scene", priority = 50)]
+    public static void OpenObstacleAuthoringScene()
+    {
+        if (BlockedByPlayMode()) return;
+        if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+        EnsureFolderPath(k_MatDir);
+        BuildObstacleAuthoringScene();
+    }
+
+    /// Saves the "HardObstacles" root found in the open scene to the obstacle prefab. The room,
+    /// table and robot-ghost reference sit outside the root (under Authoring Helpers), so they're
+    /// excluded — only the obstacle layout is saved.
+    [MenuItem("Puzzle Game/Obstacle Authoring/② Save Obstacles → Prefab", priority = 51)]
+    public static void SaveObstaclesToPrefab()
+    {
+        if (BlockedByPlayMode()) return;
+        EnsureFolderPath(k_ObstaclePrefabDir);
+
+        var root = GameObject.Find("HardObstacles");
+        if (root == null)
+        {
+            EditorUtility.DisplayDialog("No obstacle root found",
+                "This scene has no root named 'HardObstacles'.\n\nOpen the obstacle-authoring " +
+                "scene (Obstacle Authoring ▸ ① Open Authoring Scene), arrange the obstacles, then " +
+                "try again.", "OK");
+            return;
+        }
+
+        var pf = PrefabUtility.SaveAsPrefabAsset(root, k_ObstaclePrefab, out bool ok);
+        AssetDatabase.Refresh();
+        if (ok && pf != null)
+        {
+            EditorGUIUtility.PingObject(pf);
+            Selection.activeObject = pf;
+            Debug.Log($"[PuzzleSceneBuilder] Saved 'HardObstacles' → '{k_ObstaclePrefab}' " +
+                      $"({root.transform.childCount} obstacles). Now run a 'Prepare for APK " +
+                      "Build…' menu to rebuild the room from it.");
+        }
+        else Debug.LogError($"[PuzzleSceneBuilder] Failed to save obstacles → '{k_ObstaclePrefab}'.");
+    }
+
+    private const string k_ObstaclePrefabDir = "Assets/Prefabs/PuzzleGame";
+
+    /// Sandbox scene for arranging the Hard obstacle field in context. Replicates the hard room
+    /// (lit for visibility — no darkness here) with the central puzzle table and a faint reference
+    /// of the Hard robot. Everything except the editable "HardObstacles" root lives under
+    /// "Authoring Helpers (not saved)", so ② Save excludes it.
+    private static void BuildObstacleAuthoringScene()
+    {
+        var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+
+        // Same room dimensions/materials as ZenPuzzleRoom, kept lit so obstacles read clearly.
+        AddRoomLighting(8f, 8f, 3f, new Color(0.50f, 0.50f, 0.52f));
+        AddFloor(Vector3.zero, 8f, 8f, GetOrCreateMat("Floor_Zen", new Color(0.82f, 0.82f, 0.82f)));
+        AddWalls(8f, 8f, 3f, GetOrCreateMat("Wall_Zen", new Color(0.87f, 0.87f, 0.87f)));
+        AddCeiling(8f, 8f, 3f, GetOrCreateMat("Ceiling_Zen", new Color(0.90f, 0.90f, 0.90f)));
+
+        var helpers = new GameObject("— Authoring Helpers (not saved) —");
+
+        // Central puzzle table — same footprint as the game (top surface at y = 1.0). Reference
+        // only: keep obstacles clear of it so they don't cover where the robot solves.
+        var table = AddBox("PuzzleTable (reference)", new Vector3(0f, 0.5f, 0f),
+                           new Vector3(1.4f, 1.0f, 1.4f), GetOrCreateMat("Table_Zen", new Color(0.93f, 0.93f, 0.93f)));
+        table.transform.SetParent(helpers.transform, true);
+
+        // Faint ghost of the Hard robot (its prefab if authored, else the primitive defs), lifted
+        // onto the table exactly as the game does — so you can see where the pieces live while you
+        // place obstacles. Non-saved, non-colliding, translucent.
+        SeedObstacleRobotReference(helpers.transform);
+
+        // The editable obstacle root — THIS is what ② saves.
+        var obstacles = BuildObstacleRoot("HardObstacles");
+        Selection.activeGameObject = obstacles;
+
+        BuildObstacleAuthoringInstructions(helpers.transform, new Vector3(0f, 2.4f, 3.0f));
+
+        EditorSceneManager.SaveScene(scene, k_ObstacleAuthScene);
+        AssetDatabase.Refresh();
+        Debug.Log($"[PuzzleSceneBuilder] Obstacle authoring scene ready → '{k_ObstacleAuthScene}'. " +
+                  "Arrange the 'HardObstacles' children, then run Obstacle Authoring ▸ ② Save " +
+                  "Obstacles → Prefab.");
+    }
+
+    /// Drops a faint, non-colliding reference of the Hard robot (solved poses, lifted onto the
+    /// table like the game) under the helpers so obstacle placement can avoid the piece volume.
+    private static void SeedObstacleRobotReference(Transform helpers)
+    {
+        var ghostRoot = new GameObject("RobotReference (ghost — not saved)");
+        ghostRoot.transform.SetParent(helpers, true);
+
+        var hardPf = AssetDatabase.LoadAssetAtPath<GameObject>(k_RobotPrefabHard);
+        if (hardPf != null)
+        {
+            var inst = (GameObject)PrefabUtility.InstantiatePrefab(hardPf);
+            PrefabUtility.UnpackPrefabInstance(inst, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
+            inst.transform.SetParent(ghostRoot.transform, true);
+            inst.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            inst.transform.localScale = Vector3.one;
+        }
+        else
+        {
+            // No authored hard robot — show the built-in primitive silhouette instead.
+            int idx = 1;
+            foreach (var d in RobotPrimitiveDefs())
+            {
+                var go = GameObject.CreatePrimitive(d.p);
+                go.name = $"{idx:00}_{d.n}";
+                go.transform.SetParent(ghostRoot.transform, true);
+                go.transform.position   = d.pos;
+                go.transform.rotation   = Quaternion.Euler(d.euler);
+                go.transform.localScale = d.scale;
+                idx++;
+            }
+        }
+
+        // Lift onto the table exactly like BuildPuzzlePiecesFromPrefab does, so the silhouette sits
+        // where the solved robot really is.
+        const float k_TableTopY = 1.0f, k_Clearance = 0.06f;
+        var rends = ghostRoot.GetComponentsInChildren<Renderer>(true);
+        if (rends.Length > 0)
+        {
+            Bounds b = rends[0].bounds;
+            for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+            float lift = (k_TableTopY + k_Clearance) - b.min.y;
+            if (lift > 0f) ghostRoot.transform.position += Vector3.up * lift;
+        }
+
+        // Make it a translucent, non-colliding reference.
+        var refMat = GetOrCreateMat("Obstacle_RobotRef", new Color(0.55f, 0.70f, 0.95f, 0.22f), transparent: true);
+        foreach (var col in ghostRoot.GetComponentsInChildren<Collider>(true)) Object.DestroyImmediate(col);
+        foreach (var r in rends)
+        {
+            r.sharedMaterial    = refMat;
+            r.shadowCastingMode = ShadowCastingMode.Off;
+            r.receiveShadows    = false;
+        }
+    }
+
+    /// World-space instruction card for the obstacle-authoring scene.
+    private static void BuildObstacleAuthoringInstructions(Transform parent, Vector3 worldPos)
+    {
+        var root = new GameObject("Instructions_Canvas");
+        root.transform.SetParent(parent, true);
+        root.transform.position = worldPos;
+
+        var canvas = root.AddComponent<Canvas>();
+        canvas.renderMode = RenderMode.WorldSpace;
+        root.AddComponent<CanvasScaler>();
+        var rt = root.GetComponent<RectTransform>();
+        rt.sizeDelta  = new Vector2(760f, 560f);
+        rt.localScale = Vector3.one * 0.0024f;
+
+        var panel = MakePanel(root.transform, "Panel", new Color(0.10f, 0.10f, 0.12f, 0.92f));
+        MakeUIText(panel.transform, "Title", "OBSTACLE AUTHORING",
+                   new Vector2(0f, 240f), new Vector2(720f, 50f), 34, new Color(0.95f, 0.95f, 0.98f));
+
+        const string body =
+            "Arrange the HARD-mode obstacle field by hand.\n\n" +
+            "• Move / rotate / scale any child of <b>HardObstacles</b>.\n" +
+            "• Add an obstacle: new primitive (or mesh) child of\n" +
+            "   HardObstacles — the build adds its collider.\n" +
+            "• Remove one: delete the child.\n\n" +
+            "The grey table and the blue robot ghost are REFERENCES\n" +
+            "(under 'Authoring Helpers') — keep obstacles clear of\n" +
+            "the table so they don't cover where pieces solve.\n" +
+            "Helpers are NOT saved.\n\n" +
+            "When done:\n" +
+            "  Obstacle Authoring ▸ ② Save Obstacles → Prefab\n" +
+            "  then a 'Prepare for APK Build…' menu to rebuild.";
+
+        var t = MakeUIText(panel.transform, "Body", body,
+                           new Vector2(0f, -25f), new Vector2(700f, 440f), 22, new Color(0.90f, 0.92f, 0.95f));
+        t.alignment = TextAlignmentOptions.TopLeft;
+    }
+
     // Worker for the prep menus above (UDP by default; the BLE menu flips s_useUdpBridge).
     public static void BuildSessionFlowScenes()
     {
@@ -1848,41 +2036,96 @@ public static class PuzzleSceneBuilder
         return go;
     }
 
-    /// Builds the hard-mode obstacle field: a few low walls, columns and open baskets that
-    /// the ceiling-dropped pieces scatter among. Parented under one root that starts inactive;
-    /// HardModeDarkroom shows it only on Hard. They sit away from the central table footprint.
+    /// The default Hard-mode obstacle field — a few low walls, columns and open baskets the
+    /// ceiling-dropped pieces scatter among. Single source of truth shared by the procedural
+    /// fallback and the obstacle-authoring seeder. They sit away from the central table footprint.
+    /// (name, primitive, world pos, local scale, euler)
+    private static (string n, PrimitiveType p, Vector3 pos, Vector3 scale, Vector3 euler)[] HardObstacleDefs()
+    {
+        return new (string n, PrimitiveType p, Vector3 pos, Vector3 scale, Vector3 euler)[]
+        {
+            // Taller walls (4) — on Hard they block sight-lines so pieces are harder to find
+            // (each sits on the floor: centre y = height/2).
+            ("Wall_A", PrimitiveType.Cube, new Vector3(-1.7f, 0.80f,  0.6f), new Vector3(0.15f, 1.6f, 1.6f), Vector3.zero),
+            ("Wall_B", PrimitiveType.Cube, new Vector3( 1.7f, 0.80f, -0.6f), new Vector3(0.15f, 1.6f, 1.6f), Vector3.zero),
+            ("Wall_C", PrimitiveType.Cube, new Vector3( 0.6f, 0.65f,  1.9f), new Vector3(1.8f,  1.3f, 0.15f), Vector3.zero),
+            ("Wall_D", PrimitiveType.Cube, new Vector3(-0.6f, 0.65f, -1.9f), new Vector3(1.8f,  1.3f, 0.15f), Vector3.zero),
+            // Columns (3)
+            ("Column_A", PrimitiveType.Cylinder, new Vector3(-1.4f, 0.9f, -1.4f), new Vector3(0.18f, 0.9f, 0.18f), Vector3.zero),
+            ("Column_B", PrimitiveType.Cylinder, new Vector3( 1.4f, 0.9f,  1.4f), new Vector3(0.18f, 0.9f, 0.18f), Vector3.zero),
+            ("Column_C", PrimitiveType.Cylinder, new Vector3( 2.0f, 0.9f,  0.0f), new Vector3(0.18f, 0.9f, 0.18f), Vector3.zero),
+            // Baskets — short wide cylinders pieces can fall into (2)
+            ("Basket_A", PrimitiveType.Cylinder, new Vector3(-2.0f, 0.20f, -0.2f), new Vector3(0.55f, 0.20f, 0.55f), Vector3.zero),
+            ("Basket_B", PrimitiveType.Cylinder, new Vector3( 1.0f, 0.20f, -1.5f), new Vector3(0.55f, 0.20f, 0.55f), Vector3.zero),
+        };
+    }
+
+    /// Builds an obstacle root from HardObstacleDefs — one primitive child per obstacle, each with
+    /// the zen obstacle material and its default primitive collider. Caller owns the root.
+    private static GameObject BuildObstacleRoot(string rootName)
+    {
+        var root   = new GameObject(rootName);
+        var colMat = GetOrCreateMat("Obstacle_Zen", new Color(0.78f, 0.78f, 0.80f));
+        foreach (var d in HardObstacleDefs())
+        {
+            var go = GameObject.CreatePrimitive(d.p);
+            go.name = d.n;
+            go.transform.SetParent(root.transform, true);
+            go.transform.position   = d.pos;
+            go.transform.localScale = d.scale;
+            go.transform.rotation   = Quaternion.Euler(d.euler);
+            go.GetComponent<Renderer>().sharedMaterial = colMat;
+        }
+        return root;
+    }
+
+    /// Builds the hard-mode obstacle group used by HardModeDarkroom (shown only on Hard).
+    /// Source priority:
+    ///   1. the hand-authored prefab (k_ObstaclePrefab) → its children ARE the obstacles
+    ///   2. the built-in procedural layout (HardObstacleDefs)
+    /// The returned root starts inactive. Static obstacles get mesh colliders so the
+    /// ceiling-dropped pieces collide with them however they were authored.
     private static GameObject BuildHardObstacles()
     {
-        var root = new GameObject("HardObstacles");
-        var colMat = GetOrCreateMat("Obstacle_Zen", new Color(0.78f, 0.78f, 0.80f));
-
-        void Add(string n, PrimitiveType prim, Vector3 pos, Vector3 scale, Vector3 euler)
+        var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(k_ObstaclePrefab);
+        GameObject root;
+        if (prefab != null)
         {
-            var go = GameObject.CreatePrimitive(prim);
-            go.name = n;
-            go.transform.SetParent(root.transform, true);
-            go.transform.position   = pos;
-            go.transform.localScale = scale;
-            go.transform.rotation   = Quaternion.Euler(euler);
-            go.GetComponent<Renderer>().material = colMat;
+            root = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+            PrefabUtility.UnpackPrefabInstance(root, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
+            root.name = "HardObstacles";
+            root.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            root.transform.localScale = Vector3.one;
+            Debug.Log($"[PuzzleSceneBuilder] Hard obstacles from prefab '{k_ObstaclePrefab}' " +
+                      $"({root.transform.childCount} obstacles).");
+        }
+        else
+        {
+            root = BuildObstacleRoot("HardObstacles");
+            Debug.Log("[PuzzleSceneBuilder] Hard obstacles: built-in procedural layout (no " +
+                      $"'{k_ObstaclePrefab}'). Author one via Puzzle Game ▸ Obstacle Authoring.");
         }
 
-        // Taller walls (4) — on Hard they should block sight-lines so pieces are harder to find
-        // (sit each on the floor: centre y = height/2).
-        Add("Wall_A", PrimitiveType.Cube, new Vector3(-1.7f, 0.80f,  0.6f), new Vector3(0.15f, 1.6f, 1.6f), Vector3.zero);
-        Add("Wall_B", PrimitiveType.Cube, new Vector3( 1.7f, 0.80f, -0.6f), new Vector3(0.15f, 1.6f, 1.6f), Vector3.zero);
-        Add("Wall_C", PrimitiveType.Cube, new Vector3( 0.6f, 0.65f,  1.9f), new Vector3(1.8f,  1.3f, 0.15f), Vector3.zero);
-        Add("Wall_D", PrimitiveType.Cube, new Vector3(-0.6f, 0.65f, -1.9f), new Vector3(1.8f,  1.3f, 0.15f), Vector3.zero);
-        // Columns (3)
-        Add("Column_A", PrimitiveType.Cylinder, new Vector3(-1.4f, 0.9f, -1.4f), new Vector3(0.18f, 0.9f, 0.18f), Vector3.zero);
-        Add("Column_B", PrimitiveType.Cylinder, new Vector3( 1.4f, 0.9f,  1.4f), new Vector3(0.18f, 0.9f, 0.18f), Vector3.zero);
-        Add("Column_C", PrimitiveType.Cylinder, new Vector3( 2.0f, 0.9f,  0.0f), new Vector3(0.18f, 0.9f, 0.18f), Vector3.zero);
-        // Baskets — short wide cylinders pieces can fall into (2)
-        Add("Basket_A", PrimitiveType.Cylinder, new Vector3(-2.0f, 0.20f, -0.2f), new Vector3(0.55f, 0.20f, 0.55f), Vector3.zero);
-        Add("Basket_B", PrimitiveType.Cylinder, new Vector3( 1.0f, 0.20f, -1.5f), new Vector3(0.55f, 0.20f, 0.55f), Vector3.zero);
-
+        EnsureObstacleColliders(root);
         root.SetActive(false);
         return root;
+    }
+
+    /// Ensures every authored obstacle collides: any child renderer lacking a collider gets a
+    /// (non-convex) mesh collider, or a bounds box if its mesh sits on grandchildren. Obstacles
+    /// are static (no Rigidbody), so non-convex mesh colliders are exact and cheap.
+    private static void EnsureObstacleColliders(GameObject root)
+    {
+        foreach (var rend in root.GetComponentsInChildren<Renderer>(true))
+        {
+            var go = rend.gameObject;
+            if (go.GetComponent<Collider>() != null) continue;
+            var mf = go.GetComponent<MeshFilter>();
+            if (mf != null && mf.sharedMesh != null)
+                go.AddComponent<MeshCollider>();   // non-convex (static obstacle)
+            else
+                go.AddComponent<BoxCollider>();     // mesh on children → approximate bounds
+        }
     }
 
     /// Spawns the XR rig at <paramref name="pos"/>. Deliberately minimal — matches the known-good
