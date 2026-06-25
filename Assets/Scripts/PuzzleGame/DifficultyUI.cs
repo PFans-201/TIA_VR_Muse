@@ -75,7 +75,10 @@ public class DifficultyUI : MonoBehaviour
         _hardOrigColor   = GetButtonColor(hardButton);
 
         if (puzzleManager != null)
+        {
             puzzleManager.OnPuzzleCompleted += HandlePuzzleCompleted;
+            puzzleManager.OnPuzzleReset     += HandlePuzzleReset;
+        }
 
         if (infoPanel != null) infoPanel.SetActive(false);
         ShowDifficultyStep();
@@ -84,7 +87,19 @@ public class DifficultyUI : MonoBehaviour
     private void OnDestroy()
     {
         if (puzzleManager != null)
+        {
             puzzleManager.OnPuzzleCompleted -= HandlePuzzleCompleted;
+            puzzleManager.OnPuzzleReset     -= HandlePuzzleReset;
+        }
+    }
+
+    /// "Restart Puzzle" — the board was cleared; reopen the difficulty menu without changing which
+    /// levels are unlocked (unlike completing a puzzle).
+    private void HandlePuzzleReset()
+    {
+        gameObject.SetActive(true);
+        if (infoPanel != null) infoPanel.SetActive(false);
+        ShowDifficultyStep();
     }
 
     // ── Difficulty selection ──────────────────────────────────────────────────

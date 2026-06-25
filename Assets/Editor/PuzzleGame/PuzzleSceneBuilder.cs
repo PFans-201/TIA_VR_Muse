@@ -1227,6 +1227,9 @@ public static class PuzzleSceneBuilder
         new GameObject("AdaptiveEventHUD").AddComponent<AdaptiveEventHUD>();
         AddMuseStatusHud();   // phase-aware Muse HUD (indices during gameplay)
 
+        // Head-locked session menu: Restart Puzzle + New Session (recalibrate from the intro).
+        new GameObject("SessionMenu").AddComponent<SessionMenu>();
+
         EditorSceneManager.SaveScene(scene, k_ZenScene);
         Debug.Log($"[PuzzleSceneBuilder] Saved {k_ZenScene}");
     }

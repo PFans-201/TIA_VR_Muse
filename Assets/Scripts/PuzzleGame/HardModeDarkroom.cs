@@ -29,14 +29,29 @@ public class HardModeDarkroom : MonoBehaviour
 
     private void OnEnable()
     {
-        if (puzzleManager != null) puzzleManager.OnPuzzleStarted += HandlePuzzleStarted;
+        if (puzzleManager != null)
+        {
+            puzzleManager.OnPuzzleStarted += HandlePuzzleStarted;
+            puzzleManager.OnPuzzleReset   += HandlePuzzleReset;
+        }
         SetDark(false);   // start lit until a puzzle is chosen
         if (obstacleRoot != null) obstacleRoot.SetActive(false);
     }
 
     private void OnDisable()
     {
-        if (puzzleManager != null) puzzleManager.OnPuzzleStarted -= HandlePuzzleStarted;
+        if (puzzleManager != null)
+        {
+            puzzleManager.OnPuzzleStarted -= HandlePuzzleStarted;
+            puzzleManager.OnPuzzleReset   -= HandlePuzzleReset;
+        }
+    }
+
+    // Restart Puzzle cleared the board → return the room to its lit, obstacle-free state.
+    private void HandlePuzzleReset()
+    {
+        SetDark(false);
+        if (obstacleRoot != null) obstacleRoot.SetActive(false);
     }
 
     private void HandlePuzzleStarted(DifficultyLevel level)

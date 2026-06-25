@@ -111,6 +111,10 @@ public class PuzzleManager : MonoBehaviour
     /// Fired when a puzzle is started — HardModeDarkroom listens to toggle dark/lantern/obstacles.
     public event Action<DifficultyLevel> OnPuzzleStarted;
 
+    /// Fired when the current puzzle is aborted/reset (e.g. the "Restart Puzzle" button) — the
+    /// DifficultyUI reopens the menu and HardModeDarkroom returns the room to its lit state.
+    public event Action OnPuzzleReset;
+
     // ── Unity lifecycle ───────────────────────────────────────────────────────
 
     private void Awake()
@@ -217,6 +221,25 @@ public class PuzzleManager : MonoBehaviour
 
         Debug.Log($"[PuzzleManager] Robot · {level} — {_activePieces.Count} pieces  " +
                   $"magnet={s.magnetForce:F1}  spawn={s.spawnMode}  brightness={s.pieceBrightness * 100:F0}%");
+    }
+
+    /// Aborts the current puzzle and clears the board (the "Restart Puzzle" button). Hides all
+    /// pieces/zones, drops listeners, and fires OnPuzzleReset so the DifficultyUI reopens and the
+    /// room returns to its lit state.
+    public void AbortPuzzle()
+    {
+        foreach (var obj in _activePieces)
+        {
+            var pp = obj?.GetComponent<PuzzlePiece>();
+            if (pp != null) pp.OnPieceSolved -= HandlePieceSolved;
+        }
+        _activePieces.Clear();
+        _solvedCount   = 0;
+        _puzzleStarted = false;
+
+        HideEverything();
+        OnPuzzleReset?.Invoke();
+        Debug.Log("[PuzzleManager] Puzzle aborted — board cleared.");
     }
 
     /// Positions a freshly-activated piece based on the difficulty spawn mode.
