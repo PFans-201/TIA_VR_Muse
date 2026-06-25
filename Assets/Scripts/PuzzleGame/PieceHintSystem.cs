@@ -24,17 +24,21 @@ public class PieceHintSystem : MonoBehaviour
         [HideInInspector] public float blend;   // current 0–1 hint blend for this pair
         [HideInInspector] public bool  glowing;
         [HideInInspector] public bool  struggleReported;   // behaviour colour-hint event fired once
+        [HideInInspector] public float revealDelay;        // staggered global-hint start (s), nearest first
     }
 
     [Header("Fade")]
-    [Tooltip("Time in seconds to fully fade hints in or out")]
-    public float transitionDuration = 0.8f;
+    [Tooltip("Time in seconds to fully fade a hint in or out (higher = slower, gentler).")]
+    public float transitionDuration = 1.3f;
+    [Tooltip("When global colour hints turn on, reveal pieces SEQUENTIALLY, nearest to the player " +
+             "first, this many seconds apart (0 = all at once).")]
+    public float hintStagger = 0.7f;
 
     [Header("Per-piece struggle triggers")]
     [Tooltip("Seconds a single piece may stay unsolved before its colour hint appears")]
-    public float struggleSeconds = 22f;
+    public float struggleSeconds = 32f;
     [Tooltip("Number of grabs of one piece before its colour hint appears")]
-    public int   struggleHeldCount = 4;
+    public int   struggleHeldCount = 6;
     [Tooltip("Seconds a piece may stay lost in a DARK room before it starts flickering")]
     public float lostSeconds = 30f;
 
@@ -62,6 +66,7 @@ public class PieceHintSystem : MonoBehaviour
     private List<PiecePair> _activePairs = new();
     private bool             _globalHintWant;
     private bool             _prevGlobalHintWant;
+    private float            _globalOnTime;   // Time.time when global hints turned on (for staggering)
 
     private void Start()
     {
@@ -109,6 +114,25 @@ public class PieceHintSystem : MonoBehaviour
         return i >= 0 && i < n.Length - 1 ? n.Substring(i + 1) : n;
     }
 
+    /// Ranks the active (unsolved) pairs by distance to the player and assigns each a staggered
+    /// reveal delay so the global colour hint lights pieces up sequentially, nearest first.
+    private void AssignRevealOrder()
+    {
+        var cam = Camera.main;
+        Vector3 eye = cam != null ? cam.transform.position : Vector3.zero;
+
+        var order = new List<PiecePair>(_activePairs);
+        order.Sort((a, b) =>
+        {
+            float da = a.piece != null ? (a.piece.transform.position - eye).sqrMagnitude : float.MaxValue;
+            float db = b.piece != null ? (b.piece.transform.position - eye).sqrMagnitude : float.MaxValue;
+            return da.CompareTo(db);
+        });
+        float stagger = Mathf.Max(0f, hintStagger);
+        for (int i = 0; i < order.Count; i++)
+            order[i].revealDelay = i * stagger;
+    }
+
     private void Update()
     {
         if (_activePairs.Count == 0) return;
@@ -116,9 +140,14 @@ public class PieceHintSystem : MonoBehaviour
         bool dark   = puzzleManager != null && puzzleManager.IsDarkRoom;
         float step  = transitionDuration > 0f ? Time.deltaTime / transitionDuration : 1f;
 
-        // Global colour-hint switched on by Muse stress → report once (affects every piece).
+        // Global colour-hint switched on by Muse stress → assign a staggered, nearest-first reveal
+        // order and report once (affects every piece, but they light up one by one).
         if (_globalHintWant && !_prevGlobalHintWant)
-            AdaptiveEventBus.Report("Colour hints on — each piece matched to its slot", AdaptiveSignal.MuseStress);
+        {
+            AssignRevealOrder();
+            _globalOnTime = Time.time;
+            AdaptiveEventBus.Report("Colour hints on — pieces light up one by one, nearest first", AdaptiveSignal.MuseStress);
+        }
         _prevGlobalHintWant = _globalHintWant;
 
         foreach (var pair in _activePairs)
@@ -141,7 +170,10 @@ public class PieceHintSystem : MonoBehaviour
                 pair.struggleReported = true;
             }
 
-            float target = (_globalHintWant || struggling) ? 1f : 0f;
+            // Global hint reveals sequentially: this pair only starts once its staggered delay
+            // (nearest-first) has elapsed. Per-piece struggle hints ignore the stagger.
+            bool globalShown = _globalHintWant && (Time.time - _globalOnTime) >= pair.revealDelay;
+            float target = (globalShown || struggling) ? 1f : 0f;
 
             pair.blend = Mathf.MoveTowards(pair.blend, target, step);
             piece.SetHintColor(pair.hintColor, pair.blend);

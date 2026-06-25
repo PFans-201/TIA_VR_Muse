@@ -21,12 +21,12 @@ public class AdaptiveEventHUD : MonoBehaviour
 
     [Header("Behaviour")]
     [Tooltip("How long (seconds) each event stays before it fully fades out.")]
-    public float holdSeconds = 4.5f;
+    public float holdSeconds = 7.5f;
     [Tooltip("Maximum number of events shown at once (newest at the bottom).")]
     public int maxLines = 3;
 
-    private const int PanelW = 420;
-    private const int PanelH = 120;
+    private const int PanelW = 460;
+    private const int PanelH = 160;   // taller so the larger 3-line text isn't clipped
     private const string HexMuse = "#5AA8FF";   // Muse stress
     private const string HexGame = "#FFA838";   // behaviour
 
@@ -120,7 +120,7 @@ public class AdaptiveEventHUD : MonoBehaviour
         _body = AddTMP(bodyRT, "BodyText");
         Stretch(_body.GetComponent<RectTransform>());
         _body.text      = "";
-        _body.fontSize  = 12f;
+        _body.fontSize  = 17f;                            // larger so the hint reads at a glance
         _body.color     = Color.white;
         _body.alignment = TextAlignmentOptions.Bottom;   // grow upward from the bottom
         _body.textWrappingMode = TextWrappingModes.Normal;
