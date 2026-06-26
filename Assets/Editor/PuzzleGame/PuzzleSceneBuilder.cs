@@ -574,7 +574,7 @@ public static class PuzzleSceneBuilder
         MakeUIText(panel.transform, "Title", "Before we start",
                    new Vector2(0f, 190f), new Vector2(680f, 70f), 40, new Color(0.18f, 0.18f, 0.18f));
         MakeUIText(panel.transform, "Body",
-                   "To adapt the game to you, we need to measure your brainwaves in a calm state. For the next 20 seconds after the confirmation, please stand still and as relaxed as possible, keeping your eyes open.\n" + "When you are ready, press 'OK' to begin.",
+                   "To adapt the game to you, we need to measure your brainwaves in a calm state. For the next 20 seconds after the confirmation, please stand still and as relaxed as possible, keeping your eyes open.\n" + "When you are ready to start, use the UI Press/back button to click 'OK'.",
                    new Vector2(0f, 0f), new Vector2(660f, 250f), 24, new Color(0.22f, 0.22f, 0.22f));
         var okay = MakeButton(panel.transform, "OkayButton", "OK", new Vector2(0f, -190f), new Vector2(220f, 56f));
 
@@ -1816,7 +1816,7 @@ public static class PuzzleSceneBuilder
         var hardInfo   = MakeInfoBadge(diffPanel.transform, "HardInfoBadge",   new Vector2( 190f, -28f));
 
         MakeUIText(diffPanel.transform, "HintLabel",
-                   "The game will adapt to you in any difficulty. \n Tap the 'i' for details on what changes between difficulties. \n The ≡ menu (bottom of your view) can turn the Behaviour-Help and Muse-Assist helpers on or off anytime.",
+                   "The game will adapt to you in any difficulty. \n\n Tap the 'i' for details on what changes between difficulties. \n\n Use the '?' menu (bottom of your view) to toggle assistance or restart the puzzle.",
                    new Vector2(0f, -120f), new Vector2(560f, 80f), 16, new Color(0.62f, 0.62f, 0.64f));
 
         // ── Status label (created BEFORE the info overlay so the overlay draws on top of it) ──

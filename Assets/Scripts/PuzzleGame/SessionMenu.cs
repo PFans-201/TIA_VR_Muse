@@ -15,7 +15,7 @@ using TMPro;
 ///                      fresh participant from the rest/active baseline again.
 ///
 /// Self-building (like the Muse HUD): drop it on any GameObject and it makes its own world-space
-/// canvas parented to the camera. It starts MINIMIZED as a small "≡" circle so it never clutters
+/// canvas parented to the camera. It starts MINIMIZED as a ? circle so it never clutters
 /// the view; click it to open. "New User" asks for a second confirming tap (it restarts
 /// everything), so it can't be triggered by accident.
 public class SessionMenu : MonoBehaviour
@@ -205,7 +205,7 @@ public class SessionMenu : MonoBehaviour
         var cbtn = _minimizedGO.AddComponent<Button>();
         cbtn.targetGraphic = cimg;
         cbtn.onClick.AddListener(() => SetExpanded(true));
-        var icon = AddText(mrt, "Icon", "≡", Vector2.zero, new Vector2(CircleD, CircleD), 34, FontStyles.Bold);
+        var icon = AddText(mrt, "Icon", "?", Vector2.zero, new Vector2(CircleD, CircleD), 34, FontStyles.Bold);
         icon.alignment = TextAlignmentOptions.Center;
 
         SetExpanded(false);   // start out of the way

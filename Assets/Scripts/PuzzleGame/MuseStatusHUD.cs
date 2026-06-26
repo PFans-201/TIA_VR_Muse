@@ -372,7 +372,7 @@ public class MuseStatusHUD : MonoBehaviour
 
         var titleTxt = AddTMP(titleBar, "TitleText");
         Stretch(titleTxt.GetComponent<RectTransform>());
-        titleTxt.text      = "MUSE";
+        titleTxt.text      = "     MUSE";
         titleTxt.fontSize  = 13f;
         titleTxt.fontStyle = FontStyles.Bold;
         titleTxt.color     = new Color(0.75f, 0.85f, 1.00f, 1f);
