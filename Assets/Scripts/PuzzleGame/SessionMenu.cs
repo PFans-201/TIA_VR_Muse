@@ -66,6 +66,12 @@ public class SessionMenu : MonoBehaviour
         }
 
         _confirmUntil = 0f;
+
+        // Tell the PC bridge a new participant is starting: it saves the current user's session
+        // (one PNG: baselines + gameplay metrics) and rolls over to a fresh per-user folder, so one
+        // user's data never bleeds into the next. No-op on the BLE build (no UDP bridge).
+        MuseUdpAdapter.Instance?.SendCommand("new_user");
+
         IMuseBaselineControl baseline = MuseDirectAdapter.Instance != null
             ? (IMuseBaselineControl)MuseDirectAdapter.Instance
             : MuseUdpAdapter.Instance;

@@ -25,8 +25,14 @@ public class ArmLantern : MonoBehaviour
     [Header("Stress-reactive cone")]
     [Tooltip("Spot angle (deg) when the player is calm — a tight, focused cone that doesn't wash the room.")]
     public float baseSpotAngle = 26f;
-    [Tooltip("Spot angle (deg) when the player is very stressed — a bit wider, slightly easier to search.")]
-    public float maxSpotAngle = 42f;
+    [Tooltip("Spot angle (deg) when the player is very stressed — noticeably wider so the search pool grows.")]
+    public float maxSpotAngle = 60f;
+    [Tooltip("Beam intensity when calm.")]
+    public float baseIntensity = 7.5f;
+    [Tooltip("Beam intensity when very stressed — clearly brighter so the help is obvious.")]
+    public float maxIntensity = 13f;
+    [Tooltip("Stress (0..1) at/above which the lantern visibly opens up and the help is announced.")]
+    public float stressThreshold = 0.70f;
 
     private XRGrabInteractable _grab;
     private Rigidbody _rb;
@@ -61,20 +67,22 @@ public class ArmLantern : MonoBehaviour
             _pendingHand = null;
         }
 
-        // While lit, widen the cone with the player's stress so a very stressed player gets a
-        // bigger pool of light to search by.
+        // While lit, OPEN UP the beam with the player's stress — both a wider cone AND a brighter
+        // beam — so a very stressed player gets a clearly bigger, brighter pool of light to search by.
         if (beam != null && beam.enabled && CognitiveLoadAdapter.Instance != null)
         {
             float stress = CognitiveLoadAdapter.Instance.StressLevel;
             beam.spotAngle = Mathf.Lerp(baseSpotAngle, maxSpotAngle, stress);
+            beam.intensity = Mathf.Lerp(baseIntensity, maxIntensity, stress);
 
-            // Report the cone-widening action once per high-stress episode (hysteresis).
-            if (!_coneWideReported && stress >= 0.70f)
+            // Announce the help once per high-stress episode (hysteresis so it can't spam).
+            if (!_coneWideReported && stress >= stressThreshold)
             {
-                AdaptiveEventBus.Report("Lantern cone widened to help you search", AdaptiveSignal.MuseStress);
+                AdaptiveEventBus.Report("High stress detected — opening your lantern wider and brighter to help you search",
+                                        AdaptiveSignal.MuseStress);
                 _coneWideReported = true;
             }
-            else if (_coneWideReported && stress <= 0.50f)
+            else if (_coneWideReported && stress <= stressThreshold - 0.20f)
             {
                 _coneWideReported = false;
             }

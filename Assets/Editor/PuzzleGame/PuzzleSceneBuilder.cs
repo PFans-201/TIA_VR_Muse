@@ -61,6 +61,10 @@ public static class PuzzleSceneBuilder
     private const string k_GameScene    = "Assets/Scenes/03_Game.unity";
     private const string k_SimPrefab    = "Assets/Samples/XR Interaction Toolkit/3.3.1/XR Interaction Simulator/XR Interaction Simulator.prefab";
 
+    // Ambient background music. Folder is scanned for the first audio clip so dropping a different
+    // track into Assets/Music just works on the next scene build (no path edit needed).
+    private const string k_MusicDir     = "Assets/Music";
+
     // EEG transport baked into the session-flow build. Default = WiFi UDP bridge (a PC runs the
     // Python bridge and streams stress to the Quest over WiFi, ports 5005/5006); the dedicated
     // "on-device BLE" menu flips this for a standalone build that connects to the Muse itself.
@@ -534,6 +538,7 @@ public static class PuzzleSceneBuilder
         AddWalls(8f, 8f, 3f, WallMat());
         AddCeiling(8f, 8f, 3f, CeilingMat());
         SpawnDecorations("intro");
+        AddBackgroundMusic();
 
         SpawnXRRig(new Vector3(0f, 0f, -2.5f), new Vector3(0f, 1.7f, 1.6f));
 
@@ -601,6 +606,7 @@ public static class PuzzleSceneBuilder
         AddWalls(8f, 9f, 3f, WallMat());
         AddCeiling(8f, 9f, 3f, CeilingMat());
         SpawnDecorations("tutorial");
+        AddBackgroundMusic();
         SpawnXRRig(new Vector3(0f, 0f, -3.5f), new Vector3(0f, 1.4f, 1.8f));
 
         var cola = new GameObject("CognitiveLoadAdapter").AddComponent<CognitiveLoadAdapter>();
@@ -1129,17 +1135,23 @@ public static class PuzzleSceneBuilder
         // Zen grey materials  (floor/wall/ceiling shared across all scenes)
         var floorMat   = FloorMat();
         var wallMat    = WallMat();
-        var tableMat   = GetOrCreateMat("Table_Zen",  new Color(0.93f, 0.93f, 0.93f));
         var ceilingMat = CeilingMat();
         // Matte them so the lantern beam doesn't glint/bounce off the room and over-light it in the
         // dark (the puzzle pieces keep their own, still-reflective, materials).
-        foreach (var m in new[] { floorMat, wallMat, tableMat, ceilingMat }) MakeMatte(m);
+        foreach (var m in new[] { floorMat, wallMat, ceilingMat }) MakeMatte(m);
+
+        // Puzzle stand uses the SAVED PuzzleStand.mat asset (the textured Onyx stand authored in the
+        // Materials folder) so a scene rebuild reuses it instead of regenerating a flat grey table.
+        // Falls back to a plain grey if the asset is missing. Not matted — keep its authored look.
+        var tableMat = AssetDatabase.LoadAssetAtPath<Material>($"{k_MatDir}/PuzzleStand.mat")
+                       ?? GetOrCreateMat("Table_Zen", new Color(0.93f, 0.93f, 0.93f));
 
         // 8 × 8 × 3 m room (roofed so it feels enclosed and contains the pieces)
         AddFloor(Vector3.zero, 8f, 8f, floorMat);
         AddWalls(8f, 8f, 3f, wallMat);
         AddCeiling(8f, 8f, 3f, ceilingMat);
         SpawnDecorations("game");
+        AddBackgroundMusic();
 
         // Central puzzle table  (top surface at y = 1.0)
         AddBox("PuzzleTable", new Vector3(0f, 0.5f, 0f), new Vector3(1.4f, 1.0f, 1.4f), tableMat);
@@ -2043,16 +2055,18 @@ public static class PuzzleSceneBuilder
         var spot = spotGO.AddComponent<Light>();
         spot.type      = LightType.Spot;
         spot.color     = new Color(1f, 0.93f, 0.75f);
-        spot.intensity = 5.5f;
-        spot.range     = 4f;        // short reach so pointing into a corner no longer lights the whole room
-        spot.spotAngle = 26f;       // tight focused cone
+        spot.intensity = 7.5f;       // brighter beam (still a tight cone + short range so it can't flood)
+        spot.range     = 4.5f;       // short reach so pointing into a corner no longer lights the whole room
+        spot.spotAngle = 26f;        // tight focused cone
         spot.shadows   = LightShadows.None;
         spot.enabled   = false;
 
         var lantern = go.AddComponent<ArmLantern>();
         lantern.beam          = spot;
         lantern.baseSpotAngle = 26f;   // calm — a focused beam, not a floodlight
-        lantern.maxSpotAngle  = 42f;   // very stressed → a bit wider, slightly easier search
+        lantern.maxSpotAngle  = 60f;   // very stressed → noticeably wider for an easier search
+        lantern.baseIntensity = 7.5f;  // calm brightness (matches the spot above)
+        lantern.maxIntensity  = 13f;   // very stressed → clearly brighter so the help is obvious
         go.SetActive(false);
         return go;
     }
@@ -2152,11 +2166,13 @@ public static class PuzzleSceneBuilder
 
     /// Spawns the XR rig at <paramref name="pos"/>. Deliberately minimal — matches the known-good
     /// feature/muse-debug-hud setup: instantiate the prefab and place it, nothing else.
-    /// We do NOT rotate the rig, add XRSpawnRecenter, or override the tracking origin:
-    ///   • The runtime recenter manipulated the XR Origin/camera and broke head tracking on Quest.
-    ///   • Forcing FLOOR tracking buried the player in the floor (Stationary-boundary headsets).
-    ///   • The rooms are laid out so the rig's default +Z forward already faces the content.
-    /// faceTarget is kept in the signature for call-site compatibility but is intentionally unused.
+    /// Spawn the XR rig at `pos`, AUTHORED already facing `faceTarget` (yaw only).
+    ///
+    /// Facing is baked into the scene here, at build time, rather than rotated at runtime:
+    ///   • The runtime play-space yaw fought head tracking and could send the player to a side wall.
+    ///   • Authoring the rig's forward toward the content is how older builds worked before it broke.
+    /// We still do NOT add XRSpawnRecenter or override the tracking origin (that buried the player in
+    /// the floor on Stationary-boundary headsets) — we only set the rig transform's position + yaw.
     private static void SpawnXRRig(Vector3 pos, Vector3 faceTarget)
     {
         var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(k_XRRigPrefab);
@@ -2167,6 +2183,40 @@ public static class PuzzleSceneBuilder
         }
         var rig = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
         rig.transform.position = pos;
+
+        // Yaw-only look-at so the rig's +Z forward points at the room content (panels/table),
+        // keeping the rig upright (ignore any height difference to faceTarget).
+        Vector3 flatDir = faceTarget - pos; flatDir.y = 0f;
+        if (flatDir.sqrMagnitude > 1e-4f)
+            rig.transform.rotation = Quaternion.LookRotation(flatDir.normalized, Vector3.up);
+    }
+
+    /// Adds a looping, low-volume 2D ambient-music source to the current scene. Called by every
+    /// scene builder so a rebuild always re-attaches the music (it isn't a runtime singleton that
+    /// would otherwise be lost when scenes are regenerated). Finds the first AudioClip in
+    /// Assets/Music, so swapping the track is just a file drop. No-op if the folder is empty.
+    private static void AddBackgroundMusic()
+    {
+        AudioClip clip = null;
+        foreach (var guid in AssetDatabase.FindAssets("t:AudioClip", new[] { k_MusicDir }))
+        {
+            clip = AssetDatabase.LoadAssetAtPath<AudioClip>(AssetDatabase.GUIDToAssetPath(guid));
+            if (clip != null) break;
+        }
+        if (clip == null)
+        {
+            Debug.LogWarning($"[PuzzleSceneBuilder] No AudioClip found in {k_MusicDir} — scene built without music.");
+            return;
+        }
+
+        var go  = new GameObject("BackgroundMusic");
+        var src = go.AddComponent<AudioSource>();
+        src.clip         = clip;
+        src.loop         = true;
+        src.playOnAwake  = true;
+        src.volume       = 0.18f;   // gentle bed under the experience, never drowns the hints
+        src.spatialBlend = 0f;      // 2D — same everywhere in the room, no falloff
+        src.priority     = 200;     // low priority so SFX always win a voice
     }
 
     private static void AddWorldText(string goName, Vector3 pos, string text)

@@ -35,15 +35,18 @@ public class PlayerSpawnGuard : MonoBehaviour
              "scene loads — so the player no longer has to reload to fix their start position.")]
     public bool recenterOnSceneLoad = true;
     [Tooltip("Also yaw the play space ONCE on load so the player faces the authored forward (the " +
-             "text panels / puzzle), regardless of which way the headset booted facing.")]
-    public bool recenterFacingOnLoad = true;
+             "text panels / puzzle), regardless of which way the headset booted facing.\n" +
+             "DEFAULT OFF: the rig is now authored already facing the content (SpawnXRRig rotates it " +
+             "toward the room at build time), and rotating the play space at runtime fought head " +
+             "tracking / sent the player to a side wall. Leave off unless a headset boots mis-yawed.")]
+    public bool recenterFacingOnLoad = false;
     [Tooltip("Frames to wait after load for XR tracking to report a real camera pose before recentering.")]
     public int  recenterDelayFrames = 3;
     [Tooltip("Extra yaw (degrees) applied AFTER facing the authored forward, to correct a headset " +
-             "that consistently boots ~90° off the text panels. +90 turns the world clockwise about " +
-             "the player; use -90 if it ends up facing the wrong wall. Applied on load AND on every " +
-             "restart / new-user recenter.")]
-    public float spawnYawOffset = 90f;
+             "that consistently boots ~90° off the text panels. Only used when recenterFacingOnLoad " +
+             "is ON. DEFAULT 0: facing is now baked into the scene by SpawnXRRig, so no runtime yaw " +
+             "is applied. Set recenterFacingOnLoad=true + ±90 only if a specific headset boots mis-yawed.")]
+    public float spawnYawOffset = 0f;
 
     private XROrigin _origin;
     private Vector3  _spawn;

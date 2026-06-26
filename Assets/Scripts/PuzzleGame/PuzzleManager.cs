@@ -57,10 +57,13 @@ public class PuzzleManager : MonoBehaviour
     [Header("Difficulty Settings")]
     public DifficultySettings easySettings = new DifficultySettings
     {
-        // startOffset (0.30) is deliberately LARGER than magnetRange (0.12) so pieces do NOT
-        // auto-snap the moment the puzzle starts — the player must carry each piece into range.
-        // magnetWhileHeld still lets it click home from the hand once it's close (Easy convenience).
-        pieceCount = 5,  magnetForce = 8f, magnetRange = 0.12f, magnetWhileHeld = true,
+        // startOffset (0.40) is deliberately LARGER than magnetRange so pieces do NOT auto-snap
+        // the moment the puzzle starts — the player must carry each piece into range.
+        // magnetWhileHeld = FALSE so Easy uses the SAME place-on-release flow as Medium/Hard: the
+        // piece is dropped near the slot and only then snaps home. With magnetWhileHeld the piece
+        // snapped straight out of the hand into the assembly and read as "disappeared"; a generous
+        // magnetRange keeps it forgiving without the vanish.
+        pieceCount = 5,  magnetForce = 8f, magnetRange = 0.16f, magnetWhileHeld = false,
         spawnMode = SpawnMode.NearSolved, startOffset = 0.40f,
         pieceBrightness = 1.00f, ghostIdleAlpha = 0.55f, ghostActiveAlpha = 0.80f
     };
@@ -341,6 +344,10 @@ public class PuzzleManager : MonoBehaviour
     {
         LastPuzzleSeconds = Time.time - _puzzleStartTime;
         Debug.Log($"[PuzzleManager] Puzzle complete! (Robot · {_currentDifficulty}) in {LastPuzzleSeconds:F1}s");
+
+        // Mark the solve on the PC session log (difficulty + elapsed seconds) so the plot can shade
+        // the gameplay span and label its duration (no-op on the BLE build, no UDP bridge).
+        MuseUdpAdapter.Instance?.SendCommand($"solved:{_currentDifficulty}:{LastPuzzleSeconds:F1}");
 
         // Clear the finished board BEFORE notifying listeners so the menu reopens onto an empty
         // room — the solved robot used to stay sitting there ("the puzzle is still behind"), and on

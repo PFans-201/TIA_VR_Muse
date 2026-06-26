@@ -224,9 +224,13 @@ class Recorder:
     three smoothed 0..1 indices) so a session can be re-plotted offline by muse_plot.py.
     Phase transitions are recoverable from the `phase` column; muse_plot draws them as
     labelled vertical lines."""
+    # `difficulty` carries the level the player picked (sticky once set); `event` is a transient
+    # marker on a single tick (e.g. "solved:124.3") — muse_plot reads both to label the chosen
+    # difficulty and shade the gameplay→solved span with its duration.
     COLUMNS = (["iso_time", "t", "phase", "contact", "used"]
                + BAND_NAMES
-               + ["theta_z", "alpha_z", "beta_z", "stress", "attention", "cognitive_load"])
+               + ["theta_z", "alpha_z", "beta_z", "stress", "attention", "cognitive_load"]
+               + ["difficulty", "event"])
 
     def __init__(self, path):
         self.path = path
@@ -234,7 +238,7 @@ class Recorder:
         self._f = open(path, "w", buffering=1)   # line-buffered so a live plotter can tail it
         self._f.write(",".join(self.COLUMNS) + "\n")
 
-    def row(self, phase, bands_mean, contact, used, z=None, idx=None):
+    def row(self, phase, bands_mean, contact, used, z=None, idx=None, difficulty="", event=""):
         def num(x):
             return "" if x is None or (isinstance(x, float) and math.isnan(x)) else f"{x:.5g}"
         vals = [time.strftime("%Y-%m-%dT%H:%M:%S"), f"{time.time() - self.t0:.3f}",
@@ -242,6 +246,7 @@ class Recorder:
         vals += [num(bands_mean.get(b) if bands_mean else None) for b in BAND_NAMES]
         vals += [num(z[i] if z else None) for i in (THETA, ALPHA, BETA)]
         vals += [num(idx[k] if idx else None) for k in ("stress", "attention", "cognitive_load")]
+        vals += [difficulty or "", event or ""]
         self._f.write(",".join(vals) + "\n")
 
     def close(self):
@@ -443,7 +448,7 @@ def run_session(args, send, recorder=None):
         print("[OK] Disconnected.")
 
 
-def run_session_unity(args, send, ctrl_sock, recorder=None):
+def run_session_unity(args, send, ctrl_sock, session=None):
     """Command-driven mode for the VR game: Unity's TutorialManager drives the dual
     baseline. States: idle -> rest -> idle -> active -> streaming. The bridge keeps
     computing band powers every tick; the rest/active states accumulate them, and on
@@ -487,6 +492,7 @@ def run_session_unity(args, send, ctrl_sock, recorder=None):
     active = collections.defaultdict(list)
     base = {}
     smoother = IndexSmoother()
+    marker = {"difficulty": "", "event": ""}   # difficulty is sticky; event is one-shot per tick
     try:
         while True:
             time.sleep(args.update)
@@ -514,6 +520,24 @@ def run_session_unity(args, send, ctrl_sock, recorder=None):
                     state, base = "idle", {}
                     rest, active = collections.defaultdict(list), collections.defaultdict(list)
                     print("[CTRL] reset")
+                elif cmd.startswith("difficulty:"):
+                    marker["difficulty"] = cmd.split(":", 1)[1]
+                    print(f"[CTRL] difficulty = {marker['difficulty']}")
+                elif cmd.startswith("solved:"):
+                    # "solved:<level>:<seconds>" — tag this tick so the plot can shade the solve span.
+                    parts = cmd.split(":")
+                    secs = parts[2] if len(parts) > 2 else "?"
+                    marker["event"] = f"solved:{secs}"
+                    print(f"[CTRL] solved {marker['difficulty'] or (parts[1] if len(parts) > 1 else '')} in {secs}s")
+                elif cmd == "new_user":
+                    # Save the finished participant's single PNG + roll over to a fresh user_NNN, then
+                    # reset the baseline state so nothing carries into the next person.
+                    if session is not None:
+                        session.rollover()
+                    state, base = "idle", {}
+                    rest, active = collections.defaultdict(list), collections.defaultdict(list)
+                    marker["difficulty"], marker["event"] = "", ""
+                    print("[CTRL] new_user — session saved + reset")
                 ack(addr, cmd)
 
             window, _ = reader.get_window(args.window)
@@ -521,8 +545,11 @@ def run_session_unity(args, send, ctrl_sock, recorder=None):
             bands_mean = mean_band_powers(bp)
 
             def record(phase, contact, used=None, z=None, idx=None):
+                recorder = session.recorder if session is not None else None
                 if recorder is not None:
-                    recorder.row(phase, bands_mean, contact, used, z, idx)
+                    recorder.row(phase, bands_mean, contact, used, z, idx,
+                                 difficulty=marker["difficulty"], event=marker["event"])
+                marker["event"] = ""   # one-shot: the event marks exactly one row
 
             if state == "rest":
                 for n, v in bp.items():
@@ -584,6 +611,85 @@ def _launch_live_plot(csv_path):
     except Exception as e:
         print(f"[INFO] could not open live plot ({e}); continuing without it.")
         return None
+
+
+def _save_session_png(csv_path, png_path):
+    """Render the recorded CSV to a static PNG (the 3 used bands + the indices, with the chosen
+    difficulty and solve span annotated) via muse_plot.py --save. One image per user session."""
+    try:
+        plot_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "muse_plot.py")
+        subprocess.run([sys.executable, plot_py, csv_path, "--bands", "--save", png_path],
+                       timeout=60)
+        print(f"[INFO] saved session plot -> {png_path}")
+    except Exception as e:
+        print(f"[INFO] could not save session PNG ({e}).")
+
+
+class SessionManager:
+    """Owns one participant's recording + live plot and rotates to a fresh folder on 'new_user'.
+
+    Folders are SEQUENTIAL (user_001, user_002, …) with NO timestamps, so each maps cleanly to a
+    row in an external form. Each user session is ONE session.csv + ONE plot.png holding the whole
+    session — baseline raw EEG bands AND the in-game indices together (they can't be isolated since
+    later puzzle values are influenced by the baselines and earlier puzzles)."""
+
+    def __init__(self, base_dir, record=True, plot=True):
+        self.base_dir = base_dir
+        self.record_enabled = record
+        self.plot_enabled = plot
+        self.user = self._next_index()
+        self.recorder = None
+        self.csv_path = None
+        self.plot_proc = None
+        self._open()
+
+    def _next_index(self):
+        os.makedirs(self.base_dir, exist_ok=True)
+        n = 0
+        for name in os.listdir(self.base_dir):
+            if name.startswith("user_") and name[5:].isdigit():
+                n = max(n, int(name[5:]))
+        return n + 1
+
+    def _dir(self):
+        return os.path.join(self.base_dir, f"user_{self.user:03d}")
+
+    def _open(self):
+        d = self._dir()
+        os.makedirs(d, exist_ok=True)
+        self.csv_path = os.path.join(d, "session.csv")
+        self.recorder = Recorder(self.csv_path) if self.record_enabled else None
+        print(f"[INFO] user {self.user:03d} recording -> {self.csv_path}")
+        if self.plot_enabled and self.recorder is not None:
+            self.plot_proc = _launch_live_plot(self.csv_path)
+
+    def save_png(self):
+        if self.csv_path and os.path.exists(self.csv_path):
+            _save_session_png(self.csv_path, os.path.join(self._dir(), "plot.png"))
+
+    def _close_plot(self):
+        if self.plot_proc is not None:
+            try:
+                self.plot_proc.terminate()
+            except Exception:
+                pass
+            self.plot_proc = None
+
+    def rollover(self):
+        """'new_user': save the finished participant's PNG, close their log, start the next user."""
+        self.save_png()
+        if self.recorder is not None:
+            self.recorder.close()
+        self._close_plot()
+        self.user += 1
+        self._open()
+
+    def finalize(self):
+        """On shutdown: save the current participant's PNG and close everything."""
+        self.save_png()
+        if self.recorder is not None:
+            self.recorder.close()
+        self._close_plot()
 
 
 def main():
@@ -654,29 +760,21 @@ def main():
 
     # Record the session if --record was given OR if we're going to live-plot (the plot reads the
     # CSV the recorder writes), so the default `--unity` run both logs and shows a live window.
-    recorder = None
-    record_path = None
+    # The SessionManager keeps each participant in a sequential user_NNN folder (one session.csv +
+    # one plot.png), and the in-game "New User" button rolls it over to the next person.
+    session = None
     if args.record is not None or not args.no_plot:
-        record_path = args.record if (args.record and args.record != "auto") else None
-        if record_path is None:
-            sess_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
-            os.makedirs(sess_dir, exist_ok=True)
-            record_path = os.path.join(sess_dir, f"session_{time.strftime('%Y%m%d_%H%M%S')}.csv")
-        recorder = Recorder(record_path)
-        print(f"[INFO] recording -> {record_path}")
-
-    plot_proc = None
-    if not args.no_plot and record_path is not None:
-        plot_proc = _launch_live_plot(record_path)
+        sess_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
+        session = SessionManager(sess_dir, record=True, plot=not args.no_plot)
 
     ctrl_sock = None
     try:
         if args.unity:
             ctrl_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             ctrl_sock.bind(("0.0.0.0", args.control_port))
-            run_session_unity(args, send, ctrl_sock, recorder)
+            run_session_unity(args, send, ctrl_sock, session)
         else:
-            run_session(args, send, recorder)
+            run_session(args, send, session.recorder if session is not None else None)
     except KeyboardInterrupt:
         print("\n[INFO] Stopped by user.")
     except Exception as e:
@@ -692,13 +790,8 @@ def main():
                 ctrl_sock.close()
             except Exception:
                 pass
-        if recorder is not None:
-            recorder.close()
-        if plot_proc is not None:
-            try:
-                plot_proc.terminate()
-            except Exception:
-                pass
+        if session is not None:
+            session.finalize()   # save the current participant's PNG + close the log/plot
 
     # Exit immediately. The SimpleBLE backend's daemon threads emit harmless D-Bus
     # chatter from C++ static destructors at interpreter shutdown (it caches the

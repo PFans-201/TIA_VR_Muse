@@ -132,6 +132,10 @@ public class DifficultyUI : MonoBehaviour
     {
         if (statusLabel != null) statusLabel.text = $"Robot  ·  {level}";
 
+        // Tell the PC bridge which difficulty was chosen so the recorded session / plot is labelled
+        // with it (no-op on the BLE build, where there's no UDP bridge).
+        MuseUdpAdapter.Instance?.SendCommand($"difficulty:{level}");
+
         if (puzzleManager != null)
             puzzleManager.StartPuzzle(level);
         else

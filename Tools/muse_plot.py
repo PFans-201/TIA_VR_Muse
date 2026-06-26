@@ -47,6 +47,10 @@ INDEX_COLS = ["stress", "attention", "cognitive_load"]
 INDEX_LABELS = {"stress": "Stress", "attention": "Attention", "cognitive_load": "Cognitive load"}
 INDEX_COLORS = {"stress": "#d62728", "attention": "#1f77b4", "cognitive_load": "#2ca02c"}
 BAND_COLS = ["delta", "theta", "alpha", "beta", "gamma"]
+# Only these three bands actually feed the cognitive indices (stress/attention/cognitive load), and
+# they are the three the in-headset Muse HUD shows. The bands panel plots ONLY these so the PC plot
+# matches the HUD exactly (delta/gamma are still read from the CSV but not drawn).
+USED_BANDS = ["theta", "alpha", "beta"]
 # Explicit band colours (the matplotlib default cycle, pinned) so the in-headset Muse HUD can use
 # the SAME hues for the θ/α/β bars — what you see on the PC plot matches what you see in VR.
 BAND_COLORS = {"delta": "#1f77b4", "theta": "#ff7f0e", "alpha": "#2ca02c",
@@ -84,9 +88,10 @@ def _resolve(path):
 
 
 def load(path):
-    """Read the CSV -> (t, {col: float-array-with-NaNs}, phase-list). Robust to the file
-    still being written (a half-flushed final line is skipped)."""
-    t, cols, phases = [], {c: [] for c in INDEX_COLS + BAND_COLS}, []
+    """Read the CSV -> (t, {col: float-array-with-NaNs}, phases, diffs, events). Robust to the file
+    still being written (a half-flushed final line is skipped). `diffs`/`events` are per-tick strings
+    from the difficulty/event marker columns (empty when absent)."""
+    t, cols, phases, diffs, events = [], {c: [] for c in INDEX_COLS + BAND_COLS}, [], [], []
     with open(path, newline="") as f:
         reader = csv.DictReader(f)
         for r in reader:
@@ -98,10 +103,12 @@ def load(path):
                 continue                       # partially written line — stop cleanly
             t.append(tv)
             phases.append(r.get("phase", "") or "")
+            diffs.append(r.get("difficulty", "") or "")
+            events.append(r.get("event", "") or "")
             for c in cols:
                 v = r.get(c, "")
                 cols[c].append(float(v) if v not in ("", None) else np.nan)
-    return (np.array(t), {c: np.array(v, dtype=float) for c, v in cols.items()}, phases)
+    return (np.array(t), {c: np.array(v, dtype=float) for c, v in cols.items()}, phases, diffs, events)
 
 
 def phase_spans(t, phases):
@@ -137,9 +144,43 @@ def draw_phase_markers(ax, spans, label=True):
                     bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.7))
 
 
+def _fmt_mmss(secs):
+    secs = int(round(secs))
+    return f"{secs // 60}:{secs % 60:02d}"
+
+
+def draw_solves(ax, t, diffs, events, label=True):
+    """Draw a BORDERED BOX over each solved puzzle, spanning from when that difficulty started to
+    when it was solved (start = solve_t − elapsed, from the 'solved:<seconds>' marker + the
+    difficulty active at that tick). On the metrics panel the box is captioned, in its middle, with
+    the difficulty and the elapsed time until solved."""
+    from matplotlib.transforms import blended_transform_factory
+    tf = blended_transform_factory(ax.transData, ax.transAxes)   # x = data, y = axes fraction
+    for i, ev in enumerate(events):
+        if not ev.startswith("solved"):
+            continue
+        try:
+            dur = float(ev.split(":")[1])
+        except (IndexError, ValueError):
+            dur = 0.0
+        solve_t = t[i]
+        start_t = max(t[0], solve_t - dur) if dur > 0 else solve_t
+        lvl = diffs[i] if i < len(diffs) and diffs[i] else "?"
+
+        # Full-height bordered box marking the whole puzzle (difficulty start → solved).
+        ax.axvspan(start_t, solve_t, facecolor="#2ca02c", alpha=0.10, zorder=0,
+                   edgecolor="#2ca02c", linewidth=1.5)
+        if label:
+            ax.text((start_t + solve_t) / 2.0, 0.5,
+                    f"{lvl}\nsolved in {_fmt_mmss(dur)}", transform=tf,
+                    ha="center", va="center", fontsize=9, color="#1e6b1e", fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="#2ca02c", alpha=0.92),
+                    zorder=5)
+
+
 def render(fig, axes, data, with_bands):
     """(Re)draw the figure in place from freshly loaded data — shared by static & live."""
-    t, cols, phases = data
+    t, cols, phases, diffs, events = data
     spans = phase_spans(t, phases)
 
     ax = axes[0]
@@ -151,21 +192,26 @@ def render(fig, axes, data, with_bands):
     ax.axhline(0.5, color="#999999", lw=0.8, ls=":", zorder=1)   # 0.5 == baseline level
     ax.set_ylim(-0.02, 1.02)
     ax.set_ylabel("index (0–1)")
+    # Each solved puzzle gets its own captioned box (difficulty + elapsed), so the title stays plain.
     ax.set_title("Muse cognitive indices across game steps")
     ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8, framealpha=0.9)
     draw_phase_markers(ax, spans, label=True)
+    draw_solves(ax, t, diffs, events, label=True)
 
     if with_bands:
         axb = axes[1]
         axb.clear()
-        for c in BAND_COLS:
+        # Only the three bands that feed the indices (and that the headset HUD shows).
+        for c in USED_BANDS:
             y = cols[c]
             if np.any(~np.isnan(y)):
                 axb.plot(t, y, color=BAND_COLORS[c], lw=1.2, label=c)
         axb.set_ylabel("band power (µV²)")
         axb.set_yscale("log")
+        axb.set_title("Raw EEG band powers used for the indices (θ / α / β)")
         axb.legend(loc="center left", bbox_to_anchor=(1.01, 0.5), fontsize=8, framealpha=0.9)
         draw_phase_markers(axb, spans, label=False)
+        draw_solves(axb, t, diffs, events, label=False)
 
     axes[-1].set_xlabel("time (s)")
     fig.tight_layout()
