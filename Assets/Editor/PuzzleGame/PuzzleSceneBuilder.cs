@@ -1814,7 +1814,7 @@ public static class PuzzleSceneBuilder
         var hardInfo   = MakeInfoBadge(diffPanel.transform, "HardInfoBadge",   new Vector2( 190f, -28f));
 
         MakeUIText(diffPanel.transform, "HintLabel",
-                   "The game will adapt to you no matter the difficulty you choose. \n Tap a mode's \"i\" for details on what changes between difficulties. \n The ≡ menu (bottom of your view) can turn the Behaviour-Help and Muse-Assist helpers on or off anytime.",
+                   "The game will adapt to you in any difficulty. \n Tap the 'i' for details on what changes between difficulties. \n The ≡ menu (bottom of your view) can turn the Behaviour-Help and Muse-Assist helpers on or off anytime.",
                    new Vector2(0f, -120f), new Vector2(560f, 80f), 16, new Color(0.62f, 0.62f, 0.64f));
 
         // ── Status label (created BEFORE the info overlay so the overlay draws on top of it) ──
@@ -2197,7 +2197,7 @@ public static class PuzzleSceneBuilder
         src.clip         = clip;
         src.loop         = true;
         src.playOnAwake  = true;
-        src.volume       = 0.18f;   // gentle bed under the experience, never drowns the hints
+        src.volume       = 0.12f;   // gentle bed under the experience, never drowns the hints
         src.spatialBlend = 0f;      // 2D — same everywhere in the room, no falloff
         src.priority     = 200;     // low priority so SFX always win a voice
     }
