@@ -5,7 +5,11 @@ using UnityEngine.UI;
 using UnityEngine.XR.Interaction.Toolkit.UI;
 using TMPro;
 
-/// Small head-locked session menu with two controls:
+/// Small head-locked session menu with:
+///   • Game Hints toggle  — turns the behaviour-driven piece hints (PieceHintSystem) on/off.
+///   • Muse Assist toggle — turns the MUSE-stress-driven assistance on/off (mechanical easing in
+///                          AdaptiveDifficultyController + the stress speed-up of the hints). Both
+///                          switches are independent and live in AssistanceSettings.
 ///   • Restart Puzzle — clears the board and reopens difficulty selection (PuzzleManager.AbortPuzzle).
 ///   • New Session    — resets the Muse calibration and reloads the intro scene, i.e. starts a
 ///                      fresh participant from the rest/active baseline again.
@@ -26,8 +30,11 @@ public class SessionMenu : MonoBehaviour
     public string introScene = "01_Intro";
 
     private const int PanelW = 300;
-    private const int PanelH = 150;
+    private const int PanelH = 250;
     private const int CircleD = 80;
+
+    private static readonly Color ToggleOnColor  = new Color(0.30f, 0.55f, 0.40f);
+    private static readonly Color ToggleOffColor = new Color(0.34f, 0.34f, 0.40f);
 
     private GameObject _expandedGO;
     private GameObject _minimizedGO;
@@ -35,7 +42,16 @@ public class SessionMenu : MonoBehaviour
     private float _confirmUntil;          // New Session armed (awaiting 2nd tap) until this time
     private int   _buildRetries;
 
-    private void Start() => Build();
+    private Image           _behaviorToggleImg;
+    private TextMeshProUGUI _behaviorToggleLabel;
+    private Image           _museToggleImg;
+    private TextMeshProUGUI _museToggleLabel;
+
+    private void Start()
+    {
+        AssistanceSettings.Reset();   // fresh participant → both helpers ON by default
+        Build();
+    }
 
     private void Update()
     {
@@ -53,6 +69,32 @@ public class SessionMenu : MonoBehaviour
         var pm = FindFirstObjectByType<PuzzleManager>();
         if (pm != null) pm.AbortPuzzle();
         SetExpanded(false);
+    }
+
+    private void ToggleBehaviorHelper()
+    {
+        AssistanceSettings.SetBehaviorHelper(!AssistanceSettings.BehaviorHelperEnabled);
+        RefreshToggles();
+    }
+
+    private void ToggleMuseHelper()
+    {
+        AssistanceSettings.SetMuseHelper(!AssistanceSettings.MuseHelperEnabled);
+        RefreshToggles();
+    }
+
+    /// Paint each helper toggle to reflect its current on/off state.
+    private void RefreshToggles()
+    {
+        if (_behaviorToggleImg != null)
+            _behaviorToggleImg.color = AssistanceSettings.BehaviorHelperEnabled ? ToggleOnColor : ToggleOffColor;
+        if (_behaviorToggleLabel != null)
+            _behaviorToggleLabel.text = AssistanceSettings.BehaviorHelperEnabled ? "Game Hints:  ON" : "Game Hints:  OFF";
+
+        if (_museToggleImg != null)
+            _museToggleImg.color = AssistanceSettings.MuseHelperEnabled ? ToggleOnColor : ToggleOffColor;
+        if (_museToggleLabel != null)
+            _museToggleLabel.text = AssistanceSettings.MuseHelperEnabled ? "Muse Assist:  ON" : "Muse Assist:  OFF";
     }
 
     private void NewSession()
@@ -113,7 +155,7 @@ public class SessionMenu : MonoBehaviour
         if (FindFirstObjectByType<EventSystem>() == null)
             new GameObject("EventSystem").AddComponent<EventSystem>();
 
-        // Expanded panel: title + two buttons + minimize.
+        // Expanded panel: title + two helper toggles + Restart/New-User buttons + minimize.
         _expandedGO = MakeRect(root.transform, "Expanded").gameObject;
         Stretch((RectTransform)_expandedGO.transform);
         _expandedGO.AddComponent<Image>().color = new Color(0.07f, 0.08f, 0.13f, 0.95f);
@@ -126,14 +168,29 @@ public class SessionMenu : MonoBehaviour
                              new Vector2(24, 24), new Color(0.30f, 0.34f, 0.45f));
         min.onClick.AddListener(() => SetExpanded(false));
 
+        // Two independent helper switches — tap to flip ON/OFF (colour + label update).
+        var behaviorToggle = MakeButton(_expandedGO.transform, "BehaviorToggle", "Game Hints:  ON",
+                                        new Vector2(0f, 66f), new Vector2(PanelW - 40, 34), ToggleOnColor);
+        behaviorToggle.onClick.AddListener(ToggleBehaviorHelper);
+        _behaviorToggleImg   = behaviorToggle.targetGraphic as Image;
+        _behaviorToggleLabel = behaviorToggle.GetComponentInChildren<TextMeshProUGUI>();
+
+        var museToggle = MakeButton(_expandedGO.transform, "MuseToggle", "Muse Assist:  ON",
+                                    new Vector2(0f, 28f), new Vector2(PanelW - 40, 34), ToggleOnColor);
+        museToggle.onClick.AddListener(ToggleMuseHelper);
+        _museToggleImg   = museToggle.targetGraphic as Image;
+        _museToggleLabel = museToggle.GetComponentInChildren<TextMeshProUGUI>();
+
         var restart = MakeButton(_expandedGO.transform, "Restart", "Restart Puzzle",
-                                 new Vector2(0f, 8f), new Vector2(PanelW - 40, 40), new Color(0.34f, 0.50f, 0.40f));
+                                 new Vector2(0f, -22f), new Vector2(PanelW - 40, 38), new Color(0.34f, 0.50f, 0.40f));
         restart.onClick.AddListener(RestartPuzzle);
 
         var newS = MakeButton(_expandedGO.transform, "NewSession", "New User",
-                              new Vector2(0f, -42f), new Vector2(PanelW - 40, 40), new Color(0.52f, 0.40f, 0.36f));
+                              new Vector2(0f, -66f), new Vector2(PanelW - 40, 38), new Color(0.52f, 0.40f, 0.36f));
         newS.onClick.AddListener(NewSession);
         _newSessionLabel = newS.GetComponentInChildren<TextMeshProUGUI>();
+
+        RefreshToggles();
 
         // Minimized: a small circle with "≡".
         _minimizedGO = MakeRect(root.transform, "Minimized").gameObject;

@@ -32,25 +32,16 @@ public class PlayerSpawnGuard : MonoBehaviour
 
     [Header("Spawn recenter on scene load")]
     [Tooltip("Recenter the play space to the authored spawn XZ once, a few frames after each " +
-             "scene loads — so the player no longer has to reload to fix their start position.")]
+             "scene loads — so the player no longer has to reload to fix their start position. " +
+             "POSITION ONLY: this guard never rotates the rig — facing is baked into the scene at " +
+             "build time by SpawnXRRig (rig authored already looking at the text panels). A runtime " +
+             "yaw fought head tracking and sent the player to a side wall, so it was removed.")]
     public bool recenterOnSceneLoad = true;
-    [Tooltip("Also yaw the play space ONCE on load so the player faces the authored forward (the " +
-             "text panels / puzzle), regardless of which way the headset booted facing.\n" +
-             "DEFAULT OFF: the rig is now authored already facing the content (SpawnXRRig rotates it " +
-             "toward the room at build time), and rotating the play space at runtime fought head " +
-             "tracking / sent the player to a side wall. Leave off unless a headset boots mis-yawed.")]
-    public bool recenterFacingOnLoad = false;
     [Tooltip("Frames to wait after load for XR tracking to report a real camera pose before recentering.")]
     public int  recenterDelayFrames = 3;
-    [Tooltip("Extra yaw (degrees) applied AFTER facing the authored forward, to correct a headset " +
-             "that consistently boots ~90° off the text panels. Only used when recenterFacingOnLoad " +
-             "is ON. DEFAULT 0: facing is now baked into the scene by SpawnXRRig, so no runtime yaw " +
-             "is applied. Set recenterFacingOnLoad=true + ±90 only if a specific headset boots mis-yawed.")]
-    public float spawnYawOffset = 0f;
 
     private XROrigin _origin;
     private Vector3  _spawn;
-    private Vector3  _spawnForward;   // the rig's authored forward (the room's content direction)
 
     // ── Self-install: runs once on load, then for every scene ──────────────────
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -81,9 +72,8 @@ public class PlayerSpawnGuard : MonoBehaviour
 
     private void Awake()
     {
-        _origin       = GetComponent<XROrigin>();
-        _spawn        = transform.position;   // the rig's authored spawn position
-        _spawnForward = transform.forward;    // the direction the room was built to be faced from
+        _origin = GetComponent<XROrigin>();
+        _spawn  = transform.position;   // the rig's authored spawn position
     }
 
     // One-shot recenter on (every) scene load: slide the play space so the camera sits at the
@@ -95,7 +85,7 @@ public class PlayerSpawnGuard : MonoBehaviour
     }
 
     /// Re-run the one-shot recenter on demand (e.g. the "Restart Puzzle" button) so the player is
-    /// slid back to the authored spawn XZ and faced toward the room content again, without a reload.
+    /// slid back to the authored spawn XZ, without a reload. POSITION ONLY — never rotates the rig.
     public void RecenterNow()
     {
         if (isActiveAndEnabled) StartCoroutine(RecenterAfterLoad());
@@ -108,29 +98,12 @@ public class PlayerSpawnGuard : MonoBehaviour
         if (_origin == null || _origin.Camera == null) yield break;
 
         // XZ-only translation (height untouched → can't reintroduce the floor-sink). Same
-        // primitive the fall-recovery uses.
+        // primitive the fall-recovery uses. We deliberately do NOT rotate: the runtime facing
+        // correction fought head tracking and sent the player to a side wall, so facing is now
+        // baked into the scene at build time (SpawnXRRig authors the rig looking at the panels).
         Vector3 cam = _origin.Camera.transform.position;
         _origin.MoveCameraToWorldLocation(new Vector3(_spawn.x, cam.y, _spawn.z));
-
-        // ONE-SHOT yaw so the player faces the room's content (panels/puzzle) at the start,
-        // whichever way the headset happened to boot facing. This rotates the rig around the
-        // camera (camera position unchanged) exactly once — it never fights head tracking the
-        // way a per-frame recenter would.
-        if (recenterFacingOnLoad)
-        {
-            Vector3 camFwd = _origin.Camera.transform.forward; camFwd.y = 0f;
-            Vector3 target = _spawnForward;                    target.y = 0f;
-            if (camFwd.sqrMagnitude > 1e-4f && target.sqrMagnitude > 1e-4f)
-            {
-                float yaw = Vector3.SignedAngle(camFwd.normalized, target.normalized, Vector3.up);
-                _origin.RotateAroundCameraUsingOriginUp(yaw);
-            }
-
-            // Fixed extra correction for a headset that boots a quarter-turn off the panels.
-            if (Mathf.Abs(spawnYawOffset) > 0.01f)
-                _origin.RotateAroundCameraUsingOriginUp(spawnYawOffset);
-        }
-        Debug.Log("[PlayerSpawnGuard] Recentered play space (position + facing) on scene load.");
+        Debug.Log("[PlayerSpawnGuard] Recentered play space (position only) on scene load.");
     }
 
     private void LateUpdate()

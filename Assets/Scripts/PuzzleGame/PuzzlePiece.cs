@@ -249,6 +249,11 @@ public class PuzzlePiece : MonoBehaviour
         // keeps a DIMMED version of its own colour plus a faint self-emission — the piece still reads
         // as "settled/placed" but can never look like it disappeared, even in a dark room. Apply to
         // EVERY renderer because a prefab piece can be several child meshes.
+        //
+        // Placed pieces are also MATTED: we play almost the whole game holding up the forearm
+        // lantern (a spotlight), and a glossy placed piece threw a blinding specular highlight back
+        // at the player. Killing metallic/smoothness/specular and cutting the self-emission right
+        // down stops the assembled robot from dazzling them while keeping every piece readable.
         foreach (var r in GetComponentsInChildren<Renderer>())
         {
             if (r == null) continue;
@@ -260,8 +265,16 @@ public class PuzzlePiece : MonoBehaviour
             Color dim = src * 0.7f; dim.a = 1f;
             m.color = dim;
             if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", dim);
+
+            // Matte it so the lantern can't glare off it.
+            if (m.HasProperty("_Metallic"))   m.SetFloat("_Metallic", 0f);
+            if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0.05f);   // URP Lit
+            if (m.HasProperty("_Glossiness")) m.SetFloat("_Glossiness", 0.05f);   // Standard
+            if (m.HasProperty("_SpecularHighlights")) { m.SetFloat("_SpecularHighlights", 0f); m.EnableKeyword("_SPECULARHIGHLIGHTS_OFF"); }
+            if (m.HasProperty("_GlossyReflections"))  { m.SetFloat("_GlossyReflections", 0f);  m.EnableKeyword("_GLOSSYREFLECTIONS_OFF"); }
+
             m.EnableKeyword("_EMISSION");
-            m.SetColor("_EmissionColor", src * 0.22f);   // gentle glow so it never reads as gone
+            m.SetColor("_EmissionColor", src * 0.06f);   // barely-there glow: visible, not a glare source
         }
 
         Debug.Log($"[PuzzlePiece] '{name}' solved!");

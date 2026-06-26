@@ -574,9 +574,7 @@ public static class PuzzleSceneBuilder
         MakeUIText(panel.transform, "Title", "Before we start",
                    new Vector2(0f, 190f), new Vector2(680f, 70f), 40, new Color(0.18f, 0.18f, 0.18f));
         MakeUIText(panel.transform, "Body",
-                   "For the next 20 seconds, please stand still and stay as relaxed as possible, " +
-                   "with your eyes open.\n\nThis lets us measure your calm resting baseline so the " +
-                   "game can adapt to you.\n\nWhen you understand, press OK to begin.",
+                   "To adapt the game to you, we need to measure your brainwaves in a calm state. For the next 20 seconds after the confirmation, please stand still and as relaxed as possible, keeping your eyes open.\n" + "When you are ready, press 'OK' to begin.",
                    new Vector2(0f, 0f), new Vector2(660f, 250f), 24, new Color(0.22f, 0.22f, 0.22f));
         var okay = MakeButton(panel.transform, "OkayButton", "OK", new Vector2(0f, -190f), new Vector2(220f, 56f));
 
@@ -672,10 +670,7 @@ public static class PuzzleSceneBuilder
         MakeUIText(info.transform, "Title", "Get used to VR",
                    new Vector2(0f, 140f), new Vector2(680f, 60f), 38, new Color(0.18f, 0.18f, 0.18f));
         MakeUIText(info.transform, "Body",
-                   "Use the thumbstick to move and turn.\n\nReach toward an object on the shelf and " +
-                   "squeeze the grip button to pick it up; release to drop it on a pedestal.\n\n" +
-                   "While holding a piece, push the thumbstick to ROTATE it.\n\n" +
-                   "Take your time getting comfortable.",
+                   "Use the left thumbstick to move around and the right thumbstick or your body to turn. \n Move toward the objects on the platform and squeeze the grab button to pick them up and release to drop them. When you are grabbing an object, the right thumbstick can be used to rotate it, and you can only use your body to turn around. \n Use the 'A' button to jump. \n \n Take your time getting confortable with the controls.",
                    new Vector2(0f, -20f), new Vector2(660f, 250f), 23, new Color(0.22f, 0.22f, 0.22f));
 
         var timer = MakeUIText(root.transform, "Timer", "",
@@ -1820,9 +1815,8 @@ public static class PuzzleSceneBuilder
         var hardInfo   = MakeInfoBadge(diffPanel.transform, "HardInfoBadge",   new Vector2( 190f, -28f));
 
         MakeUIText(diffPanel.transform, "HintLabel",
-                   "Each mode sets your starting assistance — the game then adapts in real time to " +
-                   "your stress from the Muse headband. Tap a mode's \"i\" for details.",
-                   new Vector2(0f, -110f), new Vector2(560f, 60f), 16, new Color(0.62f, 0.62f, 0.64f));
+                   "The game will adapt to you no matter the difficulty you choose. \n Tap a mode's \"i\" for details on what changes between difficulties. \n The ≡ menu (bottom of your view) can turn the Game-Hint and Muse-Assist helpers on or off anytime.",
+                   new Vector2(0f, -120f), new Vector2(560f, 80f), 16, new Color(0.62f, 0.62f, 0.64f));
 
         // ── Status label (created BEFORE the info overlay so the overlay draws on top of it) ──
         var statusLabel = MakeUIText(root.transform, "StatusLabel", "",
@@ -1858,22 +1852,12 @@ public static class PuzzleSceneBuilder
         diffUI.puzzleManager     = pm;
 
         // Per-mode info copy (piece counts baked in)
-        diffUI.easyInfoTitle   = $"EASY — {easyN} pieces";
-        diffUI.easyInfoBody    = "Bright, well-lit room.\n\nPieces start right next to their slots and a " +
-                                 "strong magnet pulls each one in — it even snaps home while you're still " +
-                                 "holding it. The gentlest mode.";
-        diffUI.mediumInfoTitle = $"MEDIUM — {mediumN} pieces";
-        diffUI.mediumInfoBody  = "The room goes dark — grab the floating lantern (it clips to your arm) to " +
-                                 "search.\n\nPieces are spread further from their slots and the magnet is " +
-                                 "lighter, so you place them more deliberately.\n\nIf you get stressed or " +
-                                 "stuck on a piece, it and its slot glow the same colour and the lantern " +
-                                 "cone widens to help you.";
-        diffUI.hardInfoTitle   = $"HARD — {hardN} pieces";
-        diffUI.hardInfoBody    = "Dark room filled with walls, columns and baskets.\n\nPieces rain down from " +
-                                 "the ceiling and settle among the obstacles. The magnet is weak — this is " +
-                                 "mostly hand placement.\n\nWhen you're stressed or stuck: a piece and its " +
-                                 "slot glow the same colour, the lantern cone widens, and a long-lost piece " +
-                                 "flickers so you can find it.";
+        diffUI.easyInfoTitle   = $"EASY: {easyN} pieces";
+        diffUI.easyInfoBody    = "Well-lit room.\n\nPieces start close to their slots and have a strong magnetic pull.";
+        diffUI.mediumInfoTitle = $"MEDIUM: {mediumN} pieces";
+        diffUI.mediumInfoBody  = "Dark room. Grab the floating lantern to search, it's width will adapt to your stress levels. \n\nPieces are spread further from their slots and the magnetic pull is lighter.";
+        diffUI.hardInfoTitle   = $"HARD: {hardN} pieces";
+        diffUI.hardInfoBody    = "Dark room with obstacles. Grab the floating lantern to search, it's width will adapt to your stress levels.\n\nPieces are randomly spawned. The magnetic pull is the lightest.";
     }
 
     /// Small round "i" badge button (uses the built-in circular Knob sprite).

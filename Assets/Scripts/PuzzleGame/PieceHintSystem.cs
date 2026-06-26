@@ -46,6 +46,21 @@ public class PieceHintSystem : MonoBehaviour
              "progress stalls again.")]
     public float blinkIdleSeconds = 20f;
 
+    [Header("Hard-mode hint timing (longer — holding a piece means you're not lost)")]
+    [Tooltip("Hard mode: accumulated HELD seconds on one piece before its colour-match hint appears " +
+             "while that piece is still AWAY from the robot. Longer than the base time because " +
+             "holding a piece means the player isn't lost — they're carrying it somewhere.")]
+    public float hardColorMatchHoldSeconds = 40f;
+    [Tooltip("Hard mode: accumulated HELD seconds before the colour-match hint when the held piece " +
+             "is already NEAR the robot — even longer, because they're clearly lining it up to place.")]
+    public float hardColorMatchHoldNearRobotSeconds = 60f;
+    [Tooltip("Hard mode: seconds with NO piece placed AND NO piece currently in hand before the " +
+             "blink hint fires — the empty-handed, stalled, 'might actually be lost' timer.")]
+    public float hardBlinkIdleSeconds = 60f;
+    [Tooltip("Distance (m) from the robot/puzzle anchor within which a held piece counts as 'near " +
+             "the robot' for the longer Hard colour-match timer.")]
+    public float nearRobotRange = 0.8f;
+
     [Header("References")]
     [Tooltip("Optional — wired by the scene builder; used to know whether the room is dark.")]
     public PuzzleManager puzzleManager;
@@ -121,6 +136,15 @@ public class PieceHintSystem : MonoBehaviour
         return i >= 0 && i < n.Length - 1 ? n.Substring(i + 1) : n;
     }
 
+    /// True when a piece is within nearRobotRange of the robot/puzzle anchor — used to extend the
+    /// Hard colour-match timer for a held piece that's already being lined up to place.
+    private bool IsNearRobot(PuzzlePiece piece)
+    {
+        if (piece == null || puzzleManager == null || puzzleManager.puzzleAnchor == null) return false;
+        return (piece.transform.position - puzzleManager.puzzleAnchor.position).sqrMagnitude
+               <= nearRobotRange * nearRobotRange;
+    }
+
     /// Unsolved active pairs ordered nearest-to-the-player first.
     private List<PiecePair> OrderedUnsolved()
     {
@@ -135,11 +159,37 @@ public class PieceHintSystem : MonoBehaviour
         return list;
     }
 
+    /// Fades every pair's hint colour/blink to zero (used when the behaviour helper is disabled).
+    private void FadeAllOut(float step)
+    {
+        foreach (var pair in _activePairs)
+        {
+            if (pair.piece == null) continue;
+            pair.blend = Mathf.MoveTowards(pair.blend, 0f, step);
+            if (!pair.piece.IsSolved)
+            {
+                pair.piece.SetHintColor(pair.hintColor, pair.blend);
+                pair.snapZone?.SetHintColor(pair.hintColor, pair.blend);
+            }
+            if (pair.glowing) { pair.piece.SetGlow(false); pair.glowing = false; }
+        }
+    }
+
     private void Update()
     {
         if (_activePairs.Count == 0) return;
 
         float step = transitionDuration > 0f ? Time.deltaTime / transitionDuration : 1f;
+
+        // Behaviour helper switched off in the session menu → never surface a hint. Release any
+        // current focus and let everything fade out cleanly (handled by the apply loop below).
+        if (!AssistanceSettings.BehaviorHelperEnabled)
+        {
+            _focus         = null;
+            _lastPlaceTime = Time.time;   // don't let the blink timer accrue while disabled
+            FadeAllOut(step);
+            return;
+        }
 
         var ordered = OrderedUnsolved();
 
@@ -158,20 +208,35 @@ public class PieceHintSystem : MonoBehaviour
         // ── Choose a focus if none is locked and a trigger has fired ──
         if (_focus == null && ordered.Count > 0)
         {
-            float mul       = _globalHintWant ? 0.5f : 1f;   // Muse stress → help sooner
-            float colorNeed = Mathf.Max(4f, colorMatchHoldSeconds * mul);
-            float blinkNeed = Mathf.Max(4f, blinkIdleSeconds     * mul);
+            // Muse stress → help sooner, but only while the Muse helper is enabled in the menu.
+            float mul  = (_globalHintWant && AssistanceSettings.MuseHelperEnabled) ? 0.5f : 1f;
+            bool  hard = puzzleManager != null && puzzleManager.CurrentDifficulty == DifficultyLevel.Hard;
 
-            // colour-match: the piece they keep holding but can't place.
-            PiecePair held = null;
+            // colour-match candidate: the piece they keep holding but can't place. Also note whether
+            // ANY piece is in hand right now (empty hands gate the Hard blink hint below).
+            PiecePair held       = null;
+            bool      anyHeldNow = false;
             foreach (var p in ordered)
+            {
+                if (p.piece.IsHeld) anyHeldNow = true;
                 if ((p.piece.IsHeld || p.piece.TotalHeldSeconds > 0f) &&
                     (held == null || p.piece.TotalHeldSeconds > held.piece.TotalHeldSeconds))
                     held = p;
-            bool colorTrig = held != null && held.piece.TotalHeldSeconds >= colorNeed;
+            }
 
-            // blink: stalled — no piece placed for a while.
-            bool blinkTrig = (Time.time - _lastPlaceTime) >= blinkNeed;
+            // How long the player may hold a piece before the colour-match hint. Hard mode waits
+            // much longer (a piece in hand means they're not lost), and longer still when that piece
+            // is already by the robot — they're clearly lining it up to place, not stuck.
+            float colorBase = hard ? hardColorMatchHoldSeconds : colorMatchHoldSeconds;
+            if (hard && held != null && held.piece.IsHeld && IsNearRobot(held.piece))
+                colorBase = hardColorMatchHoldNearRobotSeconds;
+            float colorNeed = Mathf.Max(4f, colorBase * mul);
+            bool  colorTrig = held != null && held.piece.TotalHeldSeconds >= colorNeed;
+
+            // blink: stalled — no piece placed for a while. In Hard it only fires while the player
+            // is EMPTY-HANDED; holding a piece means they're working it, not lost.
+            float blinkNeed = Mathf.Max(4f, (hard ? hardBlinkIdleSeconds : blinkIdleSeconds) * mul);
+            bool  blinkTrig = (Time.time - _lastPlaceTime) >= blinkNeed && !(hard && anyHeldNow);
 
             if (colorTrig)
             {

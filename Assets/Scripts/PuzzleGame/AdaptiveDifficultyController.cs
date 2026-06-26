@@ -90,8 +90,11 @@ public class AdaptiveDifficultyController : MonoBehaviour
     {
         if (puzzleManager == null) return;
 
-        float speed    = _targetBlend > _currentBlend ? rampUpSpeed : rampDownSpeed;
-        float newBlend = Mathf.MoveTowards(_currentBlend, _targetBlend, speed * Time.deltaTime);
+        // Muse helper switched off in the session menu → ramp assistance back to zero (and keep it
+        // there) regardless of stress. Re-enabling restores the live stress-driven target.
+        float target   = AssistanceSettings.MuseHelperEnabled ? _targetBlend : 0f;
+        float speed    = target > _currentBlend ? rampUpSpeed : rampDownSpeed;
+        float newBlend = Mathf.MoveTowards(_currentBlend, target, speed * Time.deltaTime);
 
         if (!Mathf.Approximately(newBlend, _currentBlend))
         {

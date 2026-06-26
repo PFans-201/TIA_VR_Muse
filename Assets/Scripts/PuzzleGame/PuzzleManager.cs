@@ -57,14 +57,16 @@ public class PuzzleManager : MonoBehaviour
     [Header("Difficulty Settings")]
     public DifficultySettings easySettings = new DifficultySettings
     {
-        // startOffset (0.40) is deliberately LARGER than magnetRange so pieces do NOT auto-snap
-        // the moment the puzzle starts — the player must carry each piece into range.
+        // startOffset (0.60) is deliberately MUCH larger than magnetRange so pieces never auto-snap
+        // the moment the puzzle starts — the player must carry each piece into range. (PositionPiece
+        // also enforces a minimum scatter radius above magnetRange, so even the nearest-scattered
+        // piece starts clearly OUT of the magnet field — no autocomplete on spawn.)
         // magnetWhileHeld = FALSE so Easy uses the SAME place-on-release flow as Medium/Hard: the
         // piece is dropped near the slot and only then snaps home. With magnetWhileHeld the piece
         // snapped straight out of the hand into the assembly and read as "disappeared"; a generous
         // magnetRange keeps it forgiving without the vanish.
         pieceCount = 5,  magnetForce = 8f, magnetRange = 0.16f, magnetWhileHeld = false,
-        spawnMode = SpawnMode.NearSolved, startOffset = 0.40f,
+        spawnMode = SpawnMode.NearSolved, startOffset = 0.60f,
         pieceBrightness = 1.00f, ghostIdleAlpha = 0.55f, ghostActiveAlpha = 0.80f
     };
     public DifficultySettings mediumSettings = new DifficultySettings
@@ -112,6 +114,10 @@ public class PuzzleManager : MonoBehaviour
 
     /// True while a dark-room difficulty (Medium / Hard) is active — read by PieceHintSystem.
     public bool IsDarkRoom => _puzzleStarted && _currentDifficulty != DifficultyLevel.Easy;
+
+    /// The difficulty of the active puzzle — read by PieceHintSystem to apply the longer Hard-mode
+    /// hint timings. Only meaningful while a puzzle is started.
+    public DifficultyLevel CurrentDifficulty => _currentDifficulty;
 
     /// Fired when the player completes a puzzle — DifficultyUI listens to re-open the menu.
     public event Action<DifficultyLevel> OnPuzzleCompleted;
@@ -282,9 +288,17 @@ public class PuzzleManager : MonoBehaviour
             case SpawnMode.NearSolved:
             case SpawnMode.OffsetFromSolved:
             default:
-                Vector3 rnd = UnityEngine.Random.insideUnitSphere * s.startOffset;
-                rnd.y = Mathf.Abs(rnd.y) * 0.5f;   // bias upward so pieces don't spawn under the table
-                pieceObj.transform.position = solved + rnd;
+                // Scatter on a SHELL between a minimum radius and startOffset — never inside the
+                // magnet field. insideUnitSphere used to place some pieces within magnetRange of
+                // their slot, so they auto-snapped on spawn ("autocomplete at the start"). The min
+                // radius is kept comfortably above magnetRange so every piece starts clearly out of
+                // range and must be carried in by the player.
+                float minR = Mathf.Max(s.magnetRange * 1.6f, s.startOffset * 0.5f);
+                float maxR = Mathf.Max(minR, s.startOffset);
+                Vector3 dir = UnityEngine.Random.onUnitSphere;
+                dir.y = Mathf.Abs(dir.y) * 0.5f;   // bias upward so pieces don't spawn under the table
+                if (dir.sqrMagnitude < 1e-4f) dir = Vector3.up;
+                pieceObj.transform.position = solved + dir.normalized * UnityEngine.Random.Range(minR, maxR);
                 break;
         }
     }
