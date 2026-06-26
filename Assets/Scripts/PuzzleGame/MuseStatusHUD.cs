@@ -193,7 +193,7 @@ public class MuseStatusHUD : MonoBehaviour
                 bool contact = udp.Contact;
                 _valuesLabel.text =
                     $"<color={HexConn}>calibrating…</color>  measuring your baseline    " +
-                    $"signal: {(contact ? $"<color={HexOK}><b>good ✓</b></color>" : $"<color={HexErr}><b>poor ✗</b></color>")}";
+                    $"signal: {(contact ? $"<color={HexOK}><b>good</b></color>" : $"<color={HexErr}><b>poor</b></color>")}";
             }
             if (_legendLabel != null)
             {
@@ -372,7 +372,7 @@ public class MuseStatusHUD : MonoBehaviour
 
         var titleTxt = AddTMP(titleBar, "TitleText");
         Stretch(titleTxt.GetComponent<RectTransform>());
-        titleTxt.text      = "  🧠  MUSE";
+        titleTxt.text      = "MUSE";
         titleTxt.fontSize  = 13f;
         titleTxt.fontStyle = FontStyles.Bold;
         titleTxt.color     = new Color(0.75f, 0.85f, 1.00f, 1f);
@@ -459,13 +459,12 @@ public class MuseStatusHUD : MonoBehaviour
         body.alignment = TextAlignmentOptions.TopLeft;
         body.textWrappingMode = TextWrappingModes.Normal;
         body.text =
-            "All three are measured against your active-VR baseline and squashed to 0–1 (sigmoid). " +
-            "<b>0.50 = same as baseline</b>; higher = more.  (z = std-devs above baseline.)\n\n" +
-            $"<color={HexStress}><b>Stress</b></color> = sigmoid((βz − αz)/2) — rises as beta/arousal goes up and alpha drops.\n\n" +
-            $"<color={HexCog}><b>Cognitive load</b></color> = sigmoid((θz − αz)/2) — rises as frontal theta goes up and alpha drops.\n\n" +
-            $"<color={HexAtt}><b>Attention</b></color> = sigmoid((βz − θz)/2) — the inverse Theta/Beta Ratio. " +
-            "TBR = theta/beta; a LOW TBR (theta down, beta up) means focus, so attention rises as the TBR falls.\n\n" +
-            "<i>Bands used: θ theta, α alpha, β beta (delta & gamma are not used).</i>";
+            "Each metric compares your live EEG to your active-VR baseline, squashed to 0–1.\n" +
+            "<b>0.50 = baseline</b>, higher = more.  (z = std-devs from baseline.)\n\n" +
+            $"<color={HexStress}><b>Stress</b></color> = sigmoid((βz − αz)/2) — up when beta (arousal) rises and alpha (calm) falls.\n\n" +
+            $"<color={HexCog}><b>Cognitive load</b></color> = sigmoid((θz − αz)/2) — up when theta (effort) rises and alpha falls.\n\n" +
+            $"<color={HexAtt}><b>Attention</b></color> = sigmoid((βz − θz)/2) — inverse theta/beta ratio; up when beta beats theta (focus).\n\n" +
+            "<i>Uses θ, α, β only (delta & gamma ignored).</i>";
 
         var close = MakeButton(rt, "InfoClose", "Close", new Color(0.40f, 0.44f, 0.52f));
         Pin(close.GetComponent<RectTransform>(), PanelW - 84, 6, 74, 20);
@@ -500,7 +499,7 @@ public class MuseStatusHUD : MonoBehaviour
 
         var lbl = AddTMP(rt, "Icon");
         Stretch(lbl.GetComponent<RectTransform>());
-        lbl.text      = "🧠";
+        lbl.text      = "M";
         lbl.fontSize  = 34f;
         lbl.alignment = TextAlignmentOptions.Center;
         lbl.color     = new Color(0.80f, 0.88f, 1f, 1f);

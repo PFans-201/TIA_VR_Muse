@@ -133,10 +133,14 @@ public class AdaptiveDifficultyController : MonoBehaviour
         if (!_sustainedStressActive)
             _targetBlend = 0f;   // start ramping down immediately on recovery
 
-        if (_sustainedStressActive && !wasActive)
-            AdaptiveEventBus.Report("Easing puzzle — stronger magnet + clearer pieces", AdaptiveSignal.MuseStress);
-        else if (!_sustainedStressActive && wasActive)
-            AdaptiveEventBus.Report("Stress recovered — assistance fading back", AdaptiveSignal.MuseStress);
+        // Stay silent while the Muse helper is switched off — no easing happens, so don't announce it.
+        if (AssistanceSettings.MuseHelperEnabled)
+        {
+            if (_sustainedStressActive && !wasActive)
+                AdaptiveEventBus.Report("Easing puzzle — stronger magnet + clearer pieces", AdaptiveSignal.MuseStress);
+            else if (!_sustainedStressActive && wasActive)
+                AdaptiveEventBus.Report("Stress recovered — assistance fading back", AdaptiveSignal.MuseStress);
+        }
 
         Debug.Log($"[AdaptiveDifficultyController] Stress state → {state}  " +
                   $"blend target={_targetBlend:F2}");

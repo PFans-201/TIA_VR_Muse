@@ -614,21 +614,23 @@ public static class PuzzleSceneBuilder
         // Grab practice shelf + active grab objects (the persistent EEG adapter from the intro
         // scene carries over and feeds this scene's CognitiveLoadAdapter).
         AddBox("GrabShelf", new Vector3(0f, 0.55f, 1.8f), new Vector3(1.6f, 0.08f, 0.40f), tableMat);
-        var grabMats = new[]
+        // Practice objects: three spheres + one elongated BOX (parallelepiped). The box has a clear
+        // orientation so the player can practise ROTATING a held object, not just moving it.
+        var grabDefs = new (Material mat, PrimitiveType shape, Vector3 scale)[]
         {
-            GetOrCreateMat("GrabObj_Red",    new Color(0.85f, 0.38f, 0.38f)),
-            GetOrCreateMat("GrabObj_Blue",   new Color(0.38f, 0.55f, 0.85f)),
-            GetOrCreateMat("GrabObj_Yellow", new Color(0.90f, 0.82f, 0.30f)),
-            GetOrCreateMat("GrabObj_Green",  new Color(0.38f, 0.75f, 0.45f)),
+            (GetOrCreateMat("GrabObj_Red",    new Color(0.85f, 0.38f, 0.38f)), PrimitiveType.Sphere, Vector3.one * 0.14f),
+            (GetOrCreateMat("GrabObj_Blue",   new Color(0.38f, 0.55f, 0.85f)), PrimitiveType.Sphere, Vector3.one * 0.14f),
+            (GetOrCreateMat("GrabObj_Yellow", new Color(0.90f, 0.82f, 0.30f)), PrimitiveType.Sphere, Vector3.one * 0.14f),
+            (GetOrCreateMat("GrabObj_Green",  new Color(0.38f, 0.75f, 0.45f)), PrimitiveType.Cube,   new Vector3(0.20f, 0.11f, 0.11f)),
         };
         float gx = -0.55f;
-        foreach (var mat in grabMats)
+        foreach (var d in grabDefs)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            go.name = "GrabSphere";
+            var go = GameObject.CreatePrimitive(d.shape);
+            go.name = d.shape == PrimitiveType.Cube ? "GrabBox" : "GrabSphere";
             go.transform.position   = new Vector3(gx, 0.87f, 1.8f);
-            go.transform.localScale = Vector3.one * 0.14f;
-            go.GetComponent<Renderer>().material = mat;
+            go.transform.localScale = d.scale;
+            go.GetComponent<Renderer>().material = d.mat;
             // Match the GAME pieces' physics so practice feels identical: interpolated,
             // continuous-dynamic collision (no tunnelling through the shelf/walls) and
             // velocity-tracked grabbing (the held object collides instead of ghosting through).
@@ -1215,9 +1217,6 @@ public static class PuzzleSceneBuilder
         // ── Difficulty UI (single step, robot only) ───────────────────────
         //   Built AFTER the piece sets so the "N pieces" labels reflect the resolved counts.
         BuildDifficultyCanvas(pm, new Vector3(0f, 1.8f, -1.8f));
-
-        // ── Ambient instruction text ──────────────────────────────────────
-        AddWorldText("RoomLabel", new Vector3(0f, 2.85f, -3.8f), "Assemble the puzzle");
 
         // ── Keep pieces inside the room (backstop for grabbed pieces) ──────
         var contGO = new GameObject("RoomPieceContainer");
@@ -1815,7 +1814,7 @@ public static class PuzzleSceneBuilder
         var hardInfo   = MakeInfoBadge(diffPanel.transform, "HardInfoBadge",   new Vector2( 190f, -28f));
 
         MakeUIText(diffPanel.transform, "HintLabel",
-                   "The game will adapt to you no matter the difficulty you choose. \n Tap a mode's \"i\" for details on what changes between difficulties. \n The ≡ menu (bottom of your view) can turn the Game-Hint and Muse-Assist helpers on or off anytime.",
+                   "The game will adapt to you no matter the difficulty you choose. \n Tap a mode's \"i\" for details on what changes between difficulties. \n The ≡ menu (bottom of your view) can turn the Behaviour-Help and Muse-Assist helpers on or off anytime.",
                    new Vector2(0f, -120f), new Vector2(560f, 80f), 16, new Color(0.62f, 0.62f, 0.64f));
 
         // ── Status label (created BEFORE the info overlay so the overlay draws on top of it) ──

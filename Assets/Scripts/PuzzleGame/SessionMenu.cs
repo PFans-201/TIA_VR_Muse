@@ -6,7 +6,7 @@ using UnityEngine.XR.Interaction.Toolkit.UI;
 using TMPro;
 
 /// Small head-locked session menu with:
-///   • Game Hints toggle  — turns the behaviour-driven piece hints (PieceHintSystem) on/off.
+///   • Behaviour Help toggle — turns the behaviour-driven piece hints (PieceHintSystem) on/off.
 ///   • Muse Assist toggle — turns the MUSE-stress-driven assistance on/off (mechanical easing in
 ///                          AdaptiveDifficultyController + the stress speed-up of the hints). Both
 ///                          switches are independent and live in AssistanceSettings.
@@ -89,7 +89,7 @@ public class SessionMenu : MonoBehaviour
         if (_behaviorToggleImg != null)
             _behaviorToggleImg.color = AssistanceSettings.BehaviorHelperEnabled ? ToggleOnColor : ToggleOffColor;
         if (_behaviorToggleLabel != null)
-            _behaviorToggleLabel.text = AssistanceSettings.BehaviorHelperEnabled ? "Game Hints:  ON" : "Game Hints:  OFF";
+            _behaviorToggleLabel.text = AssistanceSettings.BehaviorHelperEnabled ? "Behaviour Help:  ON" : "Behaviour Help:  OFF";
 
         if (_museToggleImg != null)
             _museToggleImg.color = AssistanceSettings.MuseHelperEnabled ? ToggleOnColor : ToggleOffColor;
@@ -169,7 +169,7 @@ public class SessionMenu : MonoBehaviour
         min.onClick.AddListener(() => SetExpanded(false));
 
         // Two independent helper switches — tap to flip ON/OFF (colour + label update).
-        var behaviorToggle = MakeButton(_expandedGO.transform, "BehaviorToggle", "Game Hints:  ON",
+        var behaviorToggle = MakeButton(_expandedGO.transform, "BehaviorToggle", "Behaviour Help:  ON",
                                         new Vector2(0f, 66f), new Vector2(PanelW - 40, 34), ToggleOnColor);
         behaviorToggle.onClick.AddListener(ToggleBehaviorHelper);
         _behaviorToggleImg   = behaviorToggle.targetGraphic as Image;

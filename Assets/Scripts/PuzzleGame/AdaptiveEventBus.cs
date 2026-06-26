@@ -37,7 +37,7 @@ public static class AdaptiveEventBus
     public static void Report(string action, AdaptiveSignal signal)
     {
         var e = new AdaptiveEvent(action, signal, Time.time);
-        Debug.Log($"[Adaptive] {(signal == AdaptiveSignal.MuseStress ? "MUSE" : "GAME")}: {action}");
+        Debug.Log($"[Adaptive] {(signal == AdaptiveSignal.MuseStress ? "MUSE" : "BEHAVIOUR")}: {action}");
         OnEvent?.Invoke(e);
     }
 }

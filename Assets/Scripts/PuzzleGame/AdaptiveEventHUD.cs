@@ -6,8 +6,8 @@ using TMPro;
 /// Transient adaptive-event readout: short text that appears near the BOTTOM of the player's
 /// view whenever the game eases conditions, then fades away — it is NOT a fixed, always-on
 /// panel. Each line is tagged with the signal that drove the action:
-///   • [MUSE] blue  — driven by the Muse S stress reading
-///   • [GAME] amber — driven by in-game behaviour (time on a piece, grabs, lost in the dark)
+///   • [MUSE] blue       — driven by the Muse S stress reading
+///   • [BEHAVIOUR] amber — driven by in-game behaviour (time on a piece, grabs, lost in the dark)
 ///
 /// Self-contained: drop on any GameObject; it builds its own World Space canvas as a child
 /// of Camera.main at runtime and subscribes to AdaptiveEventBus. See [[AdaptiveEventBus]].
@@ -71,7 +71,7 @@ public class AdaptiveEventHUD : MonoBehaviour
             newestAlpha = Mathf.Max(newestAlpha, a);
             int    al  = Mathf.RoundToInt(Mathf.Lerp(40f, 255f, a));
             string hex = e.signal == AdaptiveSignal.MuseStress ? HexMuse : HexGame;
-            string tag = e.signal == AdaptiveSignal.MuseStress ? "MUSE" : "GAME";
+            string tag = e.signal == AdaptiveSignal.MuseStress ? "MUSE" : "BEHAVIOUR";
             sb.Append($"<alpha=#{al:X2}><color={hex}><b>[{tag}]</b></color> {e.action}");
             if (i < _events.Count - 1) sb.Append('\n');
         }

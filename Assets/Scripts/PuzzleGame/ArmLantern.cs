@@ -69,7 +69,15 @@ public class ArmLantern : MonoBehaviour
 
         // While lit, OPEN UP the beam with the player's stress — both a wider cone AND a brighter
         // beam — so a very stressed player gets a clearly bigger, brighter pool of light to search by.
-        if (beam != null && beam.enabled && CognitiveLoadAdapter.Instance != null)
+        // This is a MUSE-derived helper: when Muse Assist is switched off in the ≡ menu the lantern
+        // stays at its base cone/intensity and never reacts to stress.
+        if (beam != null && beam.enabled && !AssistanceSettings.MuseHelperEnabled)
+        {
+            beam.spotAngle = baseSpotAngle;
+            beam.intensity = baseIntensity;
+            _coneWideReported = false;
+        }
+        else if (beam != null && beam.enabled && CognitiveLoadAdapter.Instance != null)
         {
             float stress = CognitiveLoadAdapter.Instance.StressLevel;
             beam.spotAngle = Mathf.Lerp(baseSpotAngle, maxSpotAngle, stress);

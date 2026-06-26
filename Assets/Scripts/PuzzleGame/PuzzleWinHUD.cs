@@ -49,7 +49,7 @@ public class PuzzleWinHUD : MonoBehaviour
         float secs = _pm != null ? _pm.LastPuzzleSeconds : 0f;
         int m = Mathf.FloorToInt(secs / 60f);
         int s = Mathf.FloorToInt(secs % 60f);
-        if (_title != null) _title.text = "✓  Puzzle solved!";
+        if (_title != null) _title.text = "Puzzle solved!";
         if (_body  != null) _body.text  = $"Robot · {level}      Time  {m}:{s:00}";
         _shownAt = Time.time;
         _active  = true;
