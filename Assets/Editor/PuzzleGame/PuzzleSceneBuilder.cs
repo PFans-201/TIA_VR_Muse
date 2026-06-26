@@ -672,7 +672,7 @@ public static class PuzzleSceneBuilder
         MakeUIText(info.transform, "Title", "Get used to VR",
                    new Vector2(0f, 140f), new Vector2(680f, 60f), 38, new Color(0.18f, 0.18f, 0.18f));
         MakeUIText(info.transform, "Body",
-                   "Use the left thumbstick to move around and the right thumbstick or your body to turn. \n Move toward the objects on the platform and squeeze the grab button to pick them up and release to drop them. When you are grabbing an object, the right thumbstick can be used to rotate it, and you can only use your body to turn around. \n Use the 'A' button to jump. \n \n Take your time getting confortable with the controls.",
+                   "Use the left thumbstick to move around and the right thumbstick or your body to turn. \n Move toward the objects on the platform and squeeze the grab button to pick them up and release to drop them. When you are grabbing an object, the right thumbstick can be used to rotate it, and you can only use your body to turn around. \n Use the 'A' button to jump.",
                    new Vector2(0f, -20f), new Vector2(660f, 250f), 23, new Color(0.22f, 0.22f, 0.22f));
 
         var timer = MakeUIText(root.transform, "Timer", "",
@@ -1674,7 +1674,6 @@ public static class PuzzleSceneBuilder
 
         var pp = piece.AddComponent<PuzzlePiece>();
         pp.solveThreshold = 0.05f;
-        pp.solvedMaterial = GetOrCreateMat("Piece_PlacedGrey", new Color(0.55f, 0.55f, 0.57f));
 
         // ── Wire the snap zone ──────────────────────────────────────────────
         var msz = snapGO.AddComponent<MagneticSnapZone>();
@@ -1729,7 +1728,6 @@ public static class PuzzleSceneBuilder
 
         var pp = go.AddComponent<PuzzlePiece>();
         pp.solveThreshold = 0.05f;
-        pp.solvedMaterial = GetOrCreateMat("Piece_PlacedGrey", new Color(0.55f, 0.55f, 0.57f));
 
         // ── Snap zone ─────────────────────────────────────────────────────
         var snapGO = new GameObject($"SnapZone_{pieceName}");

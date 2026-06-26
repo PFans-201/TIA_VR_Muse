@@ -40,9 +40,9 @@ public class PuzzlePiece : MonoBehaviour
     [Tooltip("Easy mode: pull/snap the piece into its slot even while it is still being held.")]
     [HideInInspector] public bool  magnetWhileHeld   = false;
 
-    [Header("Visual Feedback")]
-    [Tooltip("Material swapped in when the piece is correctly placed")]
-    public Material solvedMaterial;
+    // At full Muse stress the held-piece snap radius grows to (1 + this) × magnetRange, so a very
+    // stressed player can place a held piece without lining it up precisely. See FixedUpdate.
+    private const float k_HeldStressSnapBoost = 3f;
 
     /// Fires once when this piece reaches its correct placement.
     public event Action OnPieceSolved;
@@ -61,9 +61,11 @@ public class PuzzlePiece : MonoBehaviour
     // Grey that matches the zen room walls — pieces blend towards this on Hard
     private static readonly Color k_ZenGrey = new Color(0.87f, 0.87f, 0.87f);
 
-    // Neutral grey a piece turns when correctly PLACED, so finished pieces recede and the
-    // remaining (still-coloured) pieces stand out. Used when no solvedMaterial is assigned.
-    private static readonly Color k_PlacedGrey = new Color(0.55f, 0.55f, 0.57f);
+    // Dark, desaturated grey a piece turns when correctly PLACED. Finished pieces recede and read
+    // as a single "settled" colour clearly distinct from the still-coloured free pieces. Being dark
+    // it also bounces far less of the forearm-lantern spotlight back at the player (the diffuse
+    // glare that was blinding them when placing pieces with the light arm).
+    private static readonly Color k_PlacedGrey = new Color(0.28f, 0.28f, 0.30f);
 
     private Rigidbody   _rb;
     private UnityEngine.XR.Interaction.Toolkit.Interactables.XRGrabInteractable _grab;
@@ -120,8 +122,8 @@ public class PuzzlePiece : MonoBehaviour
         foreach (var col in GetComponentsInChildren<Collider>()) col.enabled = true;
         if (_renderer != null && _matInstance != null)
         {
-            _renderer.material = _matInstance;   // restore the coloured instance (MarkAsSolved swapped it)
-            UpdateMaterialColor();
+            _renderer.material = _matInstance;   // re-point at the coloured instance
+            UpdateMaterialColor();               // MarkAsSolved darkened it to placed-grey; restore the live colour
         }
     }
 
@@ -160,13 +162,7 @@ public class PuzzlePiece : MonoBehaviour
 
         float dist = Vector3.Distance(transform.position, correctPlacementTarget.position);
 
-        if (_isBeingHeld)
-        {
-            // Easy: let the held piece snap straight into the slot once it enters the field.
-            if (magnetWhileHeld && isMagneticEnabled && dist <= magnetRange)
-                MarkAsSolved();
-            return;
-        }
+        if (_isBeingHeld) { TryHeldSnap(dist); return; }
 
         if (!isMagneticEnabled || dist > magnetRange) return;
 
@@ -183,6 +179,24 @@ public class PuzzlePiece : MonoBehaviour
         _rb.angularVelocity = Vector3.zero;
 
         if (dist <= solveThreshold) MarkAsSolved();
+    }
+
+    /// Snap a HELD piece into its slot when it is brought close enough.
+    ///   • Easy (magnetWhileHeld): snaps the moment it enters the normal magnet field.
+    ///   • Any difficulty: while the Muse helper is on, the player's live stress WIDENS the snap
+    ///     radius (up to (1 + k_HeldStressSnapBoost)× magnetRange at full stress), so an overwhelmed
+    ///     player can place a held piece without lining it up precisely. The slot is the piece's own
+    ///     spot on the robot, so this only fires when the correct piece is brought up to the assembly.
+    private void TryHeldSnap(float dist)
+    {
+        if (!isMagneticEnabled) return;
+
+        if (magnetWhileHeld && dist <= magnetRange) { MarkAsSolved(); return; }
+
+        float stress = AssistanceSettings.MuseHelperEnabled && CognitiveLoadAdapter.Instance != null
+                       ? CognitiveLoadAdapter.Instance.StressLevel : 0f;
+        if (stress > 0f && dist <= magnetRange * (1f + stress * k_HeldStressSnapBoost))
+            MarkAsSolved();
     }
 
     // ── Difficulty visibility ─────────────────────────────────────────────────
@@ -244,40 +258,45 @@ public class PuzzlePiece : MonoBehaviour
         // can nest the remaining pieces flush against the assembly instead of being blocked.
         foreach (var col in GetComponentsInChildren<Collider>()) col.enabled = false;
 
-        // Placed pieces must STAY CLEARLY VISIBLE. A flat grey swap made them vanish into the grey
-        // room / assembled robot ("the easy pieces disappear once placed"), so instead each renderer
-        // keeps a DIMMED version of its own colour plus a faint self-emission — the piece still reads
-        // as "settled/placed" but can never look like it disappeared, even in a dark room. Apply to
-        // EVERY renderer because a prefab piece can be several child meshes.
+        // Placed pieces all turn the SAME dark grey (k_PlacedGrey). This does two jobs:
+        //   1. They read as one "settled/placed" colour, clearly distinct from the still-coloured
+        //      free pieces, so the player can tell at a glance what's done vs. what's left.
+        //   2. A dark surface bounces far less of the forearm-lantern spotlight back — most of the
+        //      "blinding when placing a piece with the light arm" glare is diffuse reflection off a
+        //      bright surface, so darkening the placed assembly cuts it at the source.
+        // They must still never VANISH (the old flat-grey swap made easy pieces "disappear once
+        // placed"), so each keeps a faint self-emission and stays enabled. Apply to EVERY renderer
+        // because a prefab piece can be several child meshes.
         //
-        // Placed pieces are also MATTED: we play almost the whole game holding up the forearm
-        // lantern (a spotlight), and a glossy placed piece threw a blinding specular highlight back
-        // at the player. Killing metallic/smoothness/specular and cutting the self-emission right
-        // down stops the assembled robot from dazzling them while keeping every piece readable.
+        // Placed pieces are also fully MATTED: glossy placed pieces threw a blinding specular
+        // highlight straight back at the player, so we kill metallic/smoothness/specular outright.
         foreach (var r in GetComponentsInChildren<Renderer>())
         {
             if (r == null) continue;
             r.enabled = true;                       // never let a correctly-placed piece disappear
-            var m = r.material;                     // per-renderer instance
-            Color src = m.HasProperty("_BaseColor") ? m.GetColor("_BaseColor") : m.color;
-            // Guard against an already-grey/near-black source so it is always visibly tinted.
-            if (src.maxColorComponent < 0.25f) src = k_PlacedGrey;
-            Color dim = src * 0.7f; dim.a = 1f;
-            m.color = dim;
-            if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", dim);
-
-            // Matte it so the lantern can't glare off it.
-            if (m.HasProperty("_Metallic"))   m.SetFloat("_Metallic", 0f);
-            if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0.05f);   // URP Lit
-            if (m.HasProperty("_Glossiness")) m.SetFloat("_Glossiness", 0.05f);   // Standard
-            if (m.HasProperty("_SpecularHighlights")) { m.SetFloat("_SpecularHighlights", 0f); m.EnableKeyword("_SPECULARHIGHLIGHTS_OFF"); }
-            if (m.HasProperty("_GlossyReflections"))  { m.SetFloat("_GlossyReflections", 0f);  m.EnableKeyword("_GLOSSYREFLECTIONS_OFF"); }
-
-            m.EnableKeyword("_EMISSION");
-            m.SetColor("_EmissionColor", src * 0.06f);   // barely-there glow: visible, not a glare source
+            ApplyPlacedLook(r.material);            // per-renderer instance
         }
 
         Debug.Log($"[PuzzlePiece] '{name}' solved!");
         OnPieceSolved?.Invoke();
+    }
+
+    /// Recolour one renderer's material to the uniform dark placed-grey and matte it fully so the
+    /// forearm lantern can't glare off it. Keeps a barely-there self-emission so a placed piece is
+    /// always visible (never "disappears once placed"), even in the dark hard room.
+    private static void ApplyPlacedLook(Material m)
+    {
+        Color placed = k_PlacedGrey; placed.a = 1f;
+        m.color = placed;
+        if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", placed);
+
+        if (m.HasProperty("_Metallic"))   m.SetFloat("_Metallic", 0f);
+        if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0f);      // URP Lit
+        if (m.HasProperty("_Glossiness")) m.SetFloat("_Glossiness", 0f);      // Standard
+        if (m.HasProperty("_SpecularHighlights")) { m.SetFloat("_SpecularHighlights", 0f); m.EnableKeyword("_SPECULARHIGHLIGHTS_OFF"); }
+        if (m.HasProperty("_GlossyReflections"))  { m.SetFloat("_GlossyReflections", 0f);  m.EnableKeyword("_GLOSSYREFLECTIONS_OFF"); }
+
+        m.EnableKeyword("_EMISSION");
+        m.SetColor("_EmissionColor", placed * 0.04f);   // barely-there glow: visible, not a glare source
     }
 }

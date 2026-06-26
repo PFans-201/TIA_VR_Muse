@@ -112,6 +112,11 @@ public class PuzzleManager : MonoBehaviour
     /// Read by PuzzleWinHUD to show the solve time. Zero until the first puzzle is completed.
     public float LastPuzzleSeconds { get; private set; }
 
+    /// True while a puzzle is actually running (a difficulty was chosen and pieces are live).
+    /// False in the menu / between puzzles / after a solve or restart — used to gate the hint
+    /// systems so they never surface cues when the player isn't inside a puzzle.
+    public bool IsPuzzleActive => _puzzleStarted;
+
     /// True while a dark-room difficulty (Medium / Hard) is active — read by PieceHintSystem.
     public bool IsDarkRoom => _puzzleStarted && _currentDifficulty != DifficultyLevel.Easy;
 

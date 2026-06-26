@@ -15,10 +15,13 @@ using UnityEngine;
 /// WHEN A HINT APPEARS (the focus is chosen when EITHER trigger fires):
 ///   • colour-match — the player has accumulated ≥ colorMatchHoldSeconds of HOLD time on one piece
 ///                    (they keep picking it up but can't find where it goes).
-///   • blink        — ≥ blinkIdleSeconds have passed since the last piece was placed (they're stuck
-///                    and not making progress).
-///   A high sustained Muse stress reading halves both wait times so an overwhelmed player gets help
-///   sooner, but it still only ever surfaces ONE piece.
+///   • blink        — ≥ blinkIdleSeconds have passed since the last piece was placed AND their hands
+///                    are empty (they're stuck and not making progress, not mid-placement).
+///   Behaviour vs Muse are SEPARATE: at the full timers above a cue is a Behaviour hint (needs the
+///   Behaviour helper). When sustained Muse stress is high (and the Muse helper is on) the same
+///   triggers fire EARLY — at half the time — and a cue inside that early window is credited to Muse
+///   instead. So a stressed player gets help sooner, behaviour cues are never mislabelled as Muse,
+///   and Muse cues can still appear with the Behaviour helper off. It still only surfaces ONE piece.
 ///
 /// PuzzleManager calls RegisterPairs() each time a puzzle starts.
 public class PieceHintSystem : MonoBehaviour
@@ -159,6 +162,67 @@ public class PieceHintSystem : MonoBehaviour
         return list;
     }
 
+    /// Picks the single piece to hint next, honestly attributing the cue to its cause:
+    ///   • Behaviour hint — the player held one piece too long, or stalled empty-handed for too long.
+    ///                      Fires at the FULL timers, only while the Behaviour helper is enabled.
+    ///   • Muse hint      — sustained Muse stress is high AND the Muse helper is enabled: the SAME
+    ///                      triggers fire EARLY (half the time), and a cue that fires inside that
+    ///                      accelerated window is credited to Muse, not behaviour.
+    /// So the two helpers are independent: behaviour cues never get tagged Muse just because the
+    /// player happens to be stressed, and Muse cues can appear even with the Behaviour helper off.
+    /// Returns the chosen pair (already announced on the event bus), or null if nothing should fire.
+    private PiecePair ChooseFocus(List<PiecePair> ordered)
+    {
+        bool behavior = AssistanceSettings.BehaviorHelperEnabled;
+        bool muse     = _globalHintWant && AssistanceSettings.MuseHelperEnabled;
+        bool hard     = puzzleManager != null && puzzleManager.CurrentDifficulty == DifficultyLevel.Hard;
+
+        // Most-held unsolved piece (colour-match candidate) + whether ANY piece is in hand right now.
+        PiecePair held       = null;
+        bool      anyHeldNow = false;
+        foreach (var p in ordered)
+        {
+            if (p.piece.IsHeld) anyHeldNow = true;
+            if ((p.piece.IsHeld || p.piece.TotalHeldSeconds > 0f) &&
+                (held == null || p.piece.TotalHeldSeconds > held.piece.TotalHeldSeconds))
+                held = p;
+        }
+
+        // Colour-match: they keep holding one piece but can't place it. Hard waits longer (a held
+        // piece means they're not lost), longer still when it's already by the robot.
+        float colorBase = hard ? hardColorMatchHoldSeconds : colorMatchHoldSeconds;
+        if (hard && held != null && held.piece.IsHeld && IsNearRobot(held.piece))
+            colorBase = hardColorMatchHoldNearRobotSeconds;
+        float heldSecs = held != null ? held.piece.TotalHeldSeconds : 0f;
+
+        // Blink: stalled with EMPTY hands. Holding a piece (any difficulty) means they're working it,
+        // not lost — so the blink never fires while something is in hand.
+        float blinkBase = hard ? hardBlinkIdleSeconds : blinkIdleSeconds;
+        float idleSecs  = Time.time - _lastPlaceTime;
+        bool  emptyHand = !anyHeldNow;
+
+        // Muse fires the same triggers at HALF the time; a cue inside that early window is a Muse cue.
+        bool colorMuse = muse     && held != null && heldSecs >= Mathf.Max(4f, colorBase * 0.5f);
+        bool colorBeh  = behavior && held != null && heldSecs >= Mathf.Max(4f, colorBase);
+        bool blinkMuse = muse     && emptyHand && idleSecs >= Mathf.Max(4f, blinkBase * 0.5f);
+        bool blinkBeh  = behavior && emptyHand && idleSecs >= Mathf.Max(4f, blinkBase);
+
+        if (colorMuse || colorBeh)
+        {
+            AdaptiveEventBus.Report($"Hint: '{Pretty(held.piece.name)}' matches its coloured slot",
+                                    colorMuse ? AdaptiveSignal.MuseStress : AdaptiveSignal.Behavior);
+            return held;
+        }
+        if (blinkMuse || blinkBeh)
+        {
+            var pick = ordered[0];   // nearest unsolved
+            AdaptiveEventBus.Report($"Hint: look for the glowing '{Pretty(pick.piece.name)}'",
+                                    blinkMuse ? AdaptiveSignal.MuseStress : AdaptiveSignal.Behavior);
+            return pick;
+        }
+        return null;
+    }
+
     /// Fades every pair's hint colour/blink to zero (used when the behaviour helper is disabled).
     private void FadeAllOut(float step)
     {
@@ -181,9 +245,20 @@ public class PieceHintSystem : MonoBehaviour
 
         float step = transitionDuration > 0f ? Time.deltaTime / transitionDuration : 1f;
 
-        // Behaviour helper switched off in the session menu → never surface a hint. Release any
-        // current focus and let everything fade out cleanly (handled by the apply loop below).
-        if (!AssistanceSettings.BehaviorHelperEnabled)
+        // No puzzle running (menu / between puzzles / after a solve or a "Restart Puzzle") → never
+        // surface a hint. A finished or aborted board still holds its pairs, so without this gate the
+        // blink/colour timers keep accruing and a cue can fire while the player is back at the menu.
+        if (puzzleManager != null && !puzzleManager.IsPuzzleActive)
+        {
+            _focus         = null;
+            _lastPlaceTime = Time.time;   // keep the blink timer from accruing off-puzzle
+            FadeAllOut(step);
+            return;
+        }
+
+        // Both helpers switched off in the session menu → never surface a hint. (Either one on is
+        // enough to run: behaviour hints need BehaviorHelper, Muse-accelerated hints need MuseHelper.)
+        if (!AssistanceSettings.BehaviorHelperEnabled && !AssistanceSettings.MuseHelperEnabled)
         {
             _focus         = null;
             _lastPlaceTime = Time.time;   // don't let the blink timer accrue while disabled
@@ -207,52 +282,15 @@ public class PieceHintSystem : MonoBehaviour
 
         // ── Choose a focus if none is locked and a trigger has fired ──
         if (_focus == null && ordered.Count > 0)
-        {
-            // Muse stress → help sooner, but only while the Muse helper is enabled in the menu.
-            float mul  = (_globalHintWant && AssistanceSettings.MuseHelperEnabled) ? 0.5f : 1f;
-            bool  hard = puzzleManager != null && puzzleManager.CurrentDifficulty == DifficultyLevel.Hard;
+            _focus = ChooseFocus(ordered);
 
-            // colour-match candidate: the piece they keep holding but can't place. Also note whether
-            // ANY piece is in hand right now (empty hands gate the Hard blink hint below).
-            PiecePair held       = null;
-            bool      anyHeldNow = false;
-            foreach (var p in ordered)
-            {
-                if (p.piece.IsHeld) anyHeldNow = true;
-                if ((p.piece.IsHeld || p.piece.TotalHeldSeconds > 0f) &&
-                    (held == null || p.piece.TotalHeldSeconds > held.piece.TotalHeldSeconds))
-                    held = p;
-            }
+        ApplyFocus(step);
+    }
 
-            // How long the player may hold a piece before the colour-match hint. Hard mode waits
-            // much longer (a piece in hand means they're not lost), and longer still when that piece
-            // is already by the robot — they're clearly lining it up to place, not stuck.
-            float colorBase = hard ? hardColorMatchHoldSeconds : colorMatchHoldSeconds;
-            if (hard && held != null && held.piece.IsHeld && IsNearRobot(held.piece))
-                colorBase = hardColorMatchHoldNearRobotSeconds;
-            float colorNeed = Mathf.Max(4f, colorBase * mul);
-            bool  colorTrig = held != null && held.piece.TotalHeldSeconds >= colorNeed;
-
-            // blink: stalled — no piece placed for a while. In Hard it only fires while the player
-            // is EMPTY-HANDED; holding a piece means they're working it, not lost.
-            float blinkNeed = Mathf.Max(4f, (hard ? hardBlinkIdleSeconds : blinkIdleSeconds) * mul);
-            bool  blinkTrig = (Time.time - _lastPlaceTime) >= blinkNeed && !(hard && anyHeldNow);
-
-            if (colorTrig)
-            {
-                _focus = held;
-                AdaptiveEventBus.Report($"Hint: '{Pretty(_focus.piece.name)}' matches its coloured slot",
-                                        _globalHintWant ? AdaptiveSignal.MuseStress : AdaptiveSignal.Behavior);
-            }
-            else if (blinkTrig)
-            {
-                _focus = ordered[0];   // nearest unsolved
-                AdaptiveEventBus.Report($"Hint: look for the glowing '{Pretty(_focus.piece.name)}'",
-                                        _globalHintWant ? AdaptiveSignal.MuseStress : AdaptiveSignal.Behavior);
-            }
-        }
-
-        // ── Apply: ONLY the focus piece shows the colour + blink; everything else fades out ──
+    /// Drives every pair toward its target: ONLY the focus piece fades up to its colour + blink,
+    /// everything else fades back to zero.
+    private void ApplyFocus(float step)
+    {
         foreach (var pair in _activePairs)
         {
             if (pair.piece == null) continue;
@@ -266,11 +304,10 @@ public class PieceHintSystem : MonoBehaviour
             }
 
             // Blink (emissive flicker) only on the single focus piece.
-            bool wantGlow = isFocus;
-            if (wantGlow != pair.glowing)
+            if (isFocus != pair.glowing)
             {
-                pair.piece.SetGlow(wantGlow);
-                pair.glowing = wantGlow;
+                pair.piece.SetGlow(isFocus);
+                pair.glowing = isFocus;
             }
         }
     }

@@ -133,8 +133,9 @@ public class AdaptiveDifficultyController : MonoBehaviour
         if (!_sustainedStressActive)
             _targetBlend = 0f;   // start ramping down immediately on recovery
 
-        // Stay silent while the Muse helper is switched off — no easing happens, so don't announce it.
-        if (AssistanceSettings.MuseHelperEnabled)
+        // Stay silent while the Muse helper is off (no easing happens) OR while no puzzle is running
+        // (menu / between puzzles) — otherwise an "easing puzzle" banner could pop up off-puzzle.
+        if (AssistanceSettings.MuseHelperEnabled && puzzleManager != null && puzzleManager.IsPuzzleActive)
         {
             if (_sustainedStressActive && !wasActive)
                 AdaptiveEventBus.Report("Easing puzzle — stronger magnet + clearer pieces", AdaptiveSignal.MuseStress);
