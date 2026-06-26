@@ -1216,7 +1216,9 @@ public static class PuzzleSceneBuilder
 
         // ── Difficulty UI (single step, robot only) ───────────────────────
         //   Built AFTER the piece sets so the "N pieces" labels reflect the resolved counts.
-        BuildDifficultyCanvas(pm, new Vector3(0f, 1.8f, -1.8f));
+        // Nearer the room centre (z: -1.8 -> -1.3) and a bit lower (y: 1.8 -> 1.5) so the panel
+        // sits comfortably in front of the seated/standing player rather than high and far.
+        BuildDifficultyCanvas(pm, new Vector3(0f, 1.5f, -1.3f));
 
         // ── Keep pieces inside the room (backstop for grabbed pieces) ──────
         var contGO = new GameObject("RoomPieceContainer");
@@ -2154,8 +2156,9 @@ public static class PuzzleSceneBuilder
     /// Facing is baked into the scene here, at build time, rather than rotated at runtime:
     ///   • The runtime play-space yaw fought head tracking and could send the player to a side wall.
     ///   • Authoring the rig's forward toward the content is how older builds worked before it broke.
-    /// We still do NOT add XRSpawnRecenter or override the tracking origin (that buried the player in
-    /// the floor on Stationary-boundary headsets) — we only set the rig transform's position + yaw.
+    /// There is NO automated runtime recenter/rotation anymore, and we do not override the tracking
+    /// origin (that buried the player in the floor on Stationary-boundary headsets) — facing is set
+    /// once here, at build time: the rig transform's position + yaw.
     private static void SpawnXRRig(Vector3 pos, Vector3 faceTarget)
     {
         var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(k_XRRigPrefab);
