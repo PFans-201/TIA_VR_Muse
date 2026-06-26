@@ -24,6 +24,10 @@ public class PuzzleManager : MonoBehaviour
         public float magnetForce;
         [Tooltip("Distance (m) from the snap zone that activates the magnetic pull")]
         public float magnetRange;
+        [Tooltip("Distance (m) within which a RELEASED piece snaps solved. This is the real " +
+                 "placement-precision knob: tight on Hard (must line it up), forgiving on Easy. Keep " +
+                 "it BELOW magnetRange so the magnet has a band to work in.")]
+        public float solveThreshold;
         [Tooltip("Easy: also pull/snap the piece into its slot while it is still held")]
         public bool  magnetWhileHeld;
         [Tooltip("How pieces are positioned when the puzzle starts")]
@@ -57,27 +61,28 @@ public class PuzzleManager : MonoBehaviour
     [Header("Difficulty Settings")]
     public DifficultySettings easySettings = new DifficultySettings
     {
-        // startOffset (0.60) is deliberately MUCH larger than magnetRange so pieces never auto-snap
-        // the moment the puzzle starts — the player must carry each piece into range. (PositionPiece
-        // also enforces a minimum scatter radius above magnetRange, so even the nearest-scattered
-        // piece starts clearly OUT of the magnet field — no autocomplete on spawn.)
+        // startOffset is the scatter radius (m) each piece spawns from its solved slot — the pieces
+        // are spread around the map at the start so the player must gather them. It's kept MUCH larger
+        // than magnetRange so nothing auto-snaps on spawn (PositionPiece also enforces a minimum
+        // radius above magnetRange). Easy spreads moderately; Medium a bit wider; Hard ceiling-drops
+        // across the whole room (ceilingDropAreaHalf).
         // magnetWhileHeld = FALSE so Easy uses the SAME place-on-release flow as Medium/Hard: the
         // piece is dropped near the slot and only then snaps home. With magnetWhileHeld the piece
         // snapped straight out of the hand into the assembly and read as "disappeared"; a generous
         // magnetRange keeps it forgiving without the vanish.
-        pieceCount = 5,  magnetForce = 8f, magnetRange = 0.16f, magnetWhileHeld = false,
-        spawnMode = SpawnMode.NearSolved, startOffset = 0.60f,
+        pieceCount = 5,  magnetForce = 8f, magnetRange = 0.12f, solveThreshold = 0.05f, magnetWhileHeld = true,
+        spawnMode = SpawnMode.NearSolved, startOffset = 1.40f,
         pieceBrightness = 1.00f, ghostIdleAlpha = 0.55f, ghostActiveAlpha = 0.80f
     };
     public DifficultySettings mediumSettings = new DifficultySettings
     {
-        pieceCount = 12, magnetForce = 5f,  magnetRange = 0.13f, magnetWhileHeld = false,
-        spawnMode = SpawnMode.OffsetFromSolved, startOffset = 0.40f,
+        pieceCount = 12, magnetForce = 5f,  magnetRange = 0.13f, solveThreshold = 0.05f, magnetWhileHeld = false,
+        spawnMode = SpawnMode.OffsetFromSolved, startOffset = 1.90f,
         pieceBrightness = 0.65f, ghostIdleAlpha = 0.22f, ghostActiveAlpha = 0.42f
     };
     public DifficultySettings hardSettings = new DifficultySettings
     {
-        pieceCount = 22, magnetForce = 2f,  magnetRange = 0.05f, magnetWhileHeld = false,
+        pieceCount = 22, magnetForce = 2f,  magnetRange = 0.05f, solveThreshold = 0.05f, magnetWhileHeld = false,
         spawnMode = SpawnMode.CeilingDrop, startOffset = 0f,
         pieceBrightness = 0.30f, ghostIdleAlpha = 0.05f, ghostActiveAlpha = 0.14f
     };
@@ -91,7 +96,7 @@ public class PuzzleManager : MonoBehaviour
     public float           ceilingDropRadius = 1.6f;
     [Tooltip("Half-extents (m, X×Z) of the rectangle pieces are scattered across on Hard — set to " +
              "roughly the room interior so pieces land EVERYWHERE, not just the centre.")]
-    public Vector2         ceilingDropAreaHalf = new Vector2(3.0f, 3.0f);
+    public Vector2         ceilingDropAreaHalf = new Vector2(3.7f, 3.7f);
     [Tooltip("Height (m) pieces drop from on Hard")]
     public float           ceilingDropHeight = 2.6f;
     [Tooltip("Optional — wired by the scene builder; manages MUSE S / behaviour hint colours")]
@@ -212,9 +217,13 @@ public class PuzzleManager : MonoBehaviour
             // Position the piece for this difficulty (relative to its own solved slot)
             PositionPiece(pieceObj, piece, s);
 
+            // Per-difficulty magnet is ALWAYS ON: a piece dropped within magnetRange is pulled into
+            // its slot and locks — the forgiving snap the game shipped with. (Sustained stress eases
+            // it toward Easy's stronger pull via OverrideAssistance, then fades back on recovery.)
             piece.isMagneticEnabled = s.magnetForce > 0f;
             piece.magnetForce       = s.magnetForce;
             piece.magnetRange       = s.magnetRange;
+            piece.solveThreshold    = s.solveThreshold;
             piece.magnetWhileHeld   = s.magnetWhileHeld;
             piece.OnPieceSolved    += HandlePieceSolved;
             piece.SetVisibility(s.pieceBrightness);

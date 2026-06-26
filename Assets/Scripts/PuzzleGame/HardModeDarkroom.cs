@@ -24,8 +24,10 @@ public class HardModeDarkroom : MonoBehaviour
     [Tooltip("Ambient colour while lit (restored when leaving hard mode).")]
     public Color litAmbient = new Color(0.32f, 0.32f, 0.32f);
 
-    [Tooltip("Ambient colour in the dark — pure black so nothing but the lantern is visible.")]
-    public Color darkAmbient = Color.black;
+    [Tooltip("Ambient colour in the dark — a BARELY-there grey (not pure black), so the floor/room is " +
+             "faintly sensed and never 'middle of space' black, while still reading as very dark. Raise " +
+             "slightly for more visibility, drop toward black for darker.")]
+    public Color darkAmbient = new Color(0.03f, 0.03f, 0.036f);
 
     private void OnEnable()
     {
@@ -72,11 +74,14 @@ public class HardModeDarkroom : MonoBehaviour
             foreach (var l in roomLights)
                 if (l != null) l.enabled = !dark;
 
-        // Kill EVERY ambient/indirect source, not just the ambient colour — otherwise URP
-        // environment reflections + ambient intensity still reveal wall/object outlines.
+        // Flat ambient = the ambientLight colour directly. In the dark we use a BARELY-there grey
+        // (darkAmbient) instead of pure black so the floor/room is faintly visible — very dark, but not
+        // "middle of space" black. Intensity stays at 1 (Flat ambient ignores it anyway) so the tiny
+        // colour is applied. Environment REFLECTIONS stay killed in the dark (reflectionIntensity 0) so
+        // surfaces don't glint/over-light — only the flat lift + the lantern light the room.
         RenderSettings.ambientMode      = AmbientMode.Flat;
         RenderSettings.ambientLight     = dark ? darkAmbient : litAmbient;
-        RenderSettings.ambientIntensity = dark ? 0f : 1f;
+        RenderSettings.ambientIntensity = 1f;
         RenderSettings.reflectionIntensity = dark ? 0f : 1f;
 
         if (lantern != null) lantern.SetActive(dark);

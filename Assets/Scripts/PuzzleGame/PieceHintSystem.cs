@@ -12,16 +12,23 @@ using UnityEngine;
 ///   hints never flood the board, and a new colour/blink cue only shows up after the hinted piece
 ///   has been solved.
 ///
-/// WHEN A HINT APPEARS (the focus is chosen when EITHER trigger fires):
-///   • colour-match — the player has accumulated ≥ colorMatchHoldSeconds of HOLD time on one piece
-///                    (they keep picking it up but can't find where it goes).
-///   • blink        — ≥ blinkIdleSeconds have passed since the last piece was placed AND their hands
-///                    are empty (they're stuck and not making progress, not mid-placement).
-///   Behaviour vs Muse are SEPARATE: at the full timers above a cue is a Behaviour hint (needs the
-///   Behaviour helper). When sustained Muse stress is high (and the Muse helper is on) the same
-///   triggers fire EARLY — at half the time — and a cue inside that early window is credited to Muse
-///   instead. So a stressed player gets help sooner, behaviour cues are never mislabelled as Muse,
-///   and Muse cues can still appear with the Behaviour helper off. It still only surfaces ONE piece.
+/// WHEN A HINT APPEARS (one focus piece, chosen the moment a trigger fires):
+///
+///   BEHAVIOUR triggers (need the Behaviour helper; time-based):
+///     • colour-match — accumulated HOLD time on one piece: Easy/Med 15 s, Hard 20 s. On HARD it only
+///                      appears while that held piece is NEAR the robot (within nearRobotRange) — i.e.
+///                      they're clearly lining it up, not still carrying it. On Easy/Medium it appears
+///                      wherever the piece is held.
+///     • blink        — ≥ blinkIdleSeconds (Easy/Med 20 s, Hard 30 s) since the last placement with
+///                      EMPTY hands (stalled, not lining anything up). Resets on every placement.
+///
+///   MUSE / EEG trigger (needs the Muse helper; stress-based, INSTANT — bypasses the timers above):
+///     When sustained stress is high (StressLevel ≥ CognitiveLoadAdapter.hintThreshold) the system
+///     relieves the overload immediately, routed by where the player is working:
+///       • a piece being lined up at the robot → instant colour-match on that piece.
+///       • not at the robot (empty hands)       → instant blink on the nearest unsolved piece.
+///     The Muse path is independent of the Behaviour helper (it can fire with Behaviour hints off),
+///     and a cue it raises is credited to Muse; the slower behaviour timers are credited to Behaviour.
 ///
 /// PuzzleManager calls RegisterPairs() each time a puzzle starts.
 public class PieceHintSystem : MonoBehaviour
@@ -41,27 +48,20 @@ public class PieceHintSystem : MonoBehaviour
     public float transitionDuration = 1.0f;
 
     [Header("Hint triggers (one piece at a time)")]
-    [Tooltip("Accumulated seconds the player may HOLD a single piece before its colour-match hint " +
-             "(piece + slot share a colour) appears. They keep grabbing it but can't place it.")]
-    public float colorMatchHoldSeconds = 20f;
-    [Tooltip("Seconds since the LAST piece was placed before the next unsolved piece starts to " +
-             "blink. Resets every time a piece is placed, so the next hint only comes after real " +
-             "progress stalls again.")]
+    [Tooltip("Easy/Medium: accumulated seconds the player may HOLD a single piece before its " +
+             "colour-match hint (piece + slot share a colour) appears.")]
+    public float colorMatchHoldSeconds = 15f;
+    [Tooltip("Hard: accumulated HELD seconds before the colour-match hint — and only while that held " +
+             "piece is near the robot (see nearRobotRange). Longer than Easy/Medium.")]
+    public float hardColorMatchHoldSeconds = 20f;
+    [Tooltip("Easy/Medium: seconds since the LAST piece was placed (with empty hands) before the " +
+             "next unsolved piece starts to blink. Resets every time a piece is placed.")]
     public float blinkIdleSeconds = 20f;
-
-    [Header("Hard-mode hint timing (longer — holding a piece means you're not lost)")]
-    [Tooltip("Hard mode: accumulated HELD seconds on one piece before its colour-match hint appears " +
-             "while that piece is still AWAY from the robot. Longer than the base time because " +
-             "holding a piece means the player isn't lost — they're carrying it somewhere.")]
-    public float hardColorMatchHoldSeconds = 40f;
-    [Tooltip("Hard mode: accumulated HELD seconds before the colour-match hint when the held piece " +
-             "is already NEAR the robot — even longer, because they're clearly lining it up to place.")]
-    public float hardColorMatchHoldNearRobotSeconds = 60f;
-    [Tooltip("Hard mode: seconds with NO piece placed AND NO piece currently in hand before the " +
-             "blink hint fires — the empty-handed, stalled, 'might actually be lost' timer.")]
-    public float hardBlinkIdleSeconds = 60f;
-    [Tooltip("Distance (m) from the robot/puzzle anchor within which a held piece counts as 'near " +
-             "the robot' for the longer Hard colour-match timer.")]
+    [Tooltip("Hard mode: longer empty-handed idle time before the blink hint fires.")]
+    public float hardBlinkIdleSeconds = 30f;
+    [Tooltip("Distance (m) from the robot/puzzle anchor within which a HELD piece counts as 'being " +
+             "lined up'. On Hard the colour-match hint only fires inside this range; the Muse stress " +
+             "path also uses it to route near→colour-match vs far→blink.")]
     public float nearRobotRange = 0.8f;
 
     [Header("References")]
@@ -162,14 +162,15 @@ public class PieceHintSystem : MonoBehaviour
         return list;
     }
 
-    /// Picks the single piece to hint next, honestly attributing the cue to its cause:
-    ///   • Behaviour hint — the player held one piece too long, or stalled empty-handed for too long.
-    ///                      Fires at the FULL timers, only while the Behaviour helper is enabled.
-    ///   • Muse hint      — sustained Muse stress is high AND the Muse helper is enabled: the SAME
-    ///                      triggers fire EARLY (half the time), and a cue that fires inside that
-    ///                      accelerated window is credited to Muse, not behaviour.
-    /// So the two helpers are independent: behaviour cues never get tagged Muse just because the
-    /// player happens to be stressed, and Muse cues can appear even with the Behaviour helper off.
+    /// Picks the single piece to hint next, attributing the cue to its cause:
+    ///   • Muse cue (instant) — stress is high (≥ hintThreshold) AND the Muse helper is on. It skips
+    ///                          the behaviour timers and routes by position: a piece being lined up at
+    ///                          the robot → colour-match it; otherwise (empty hands) → blink the nearest.
+    ///   • Behaviour cue (timed) — needs the Behaviour helper: colour-match after colorMatchHoldSeconds
+    ///                          of hold (on Hard only while a held piece is near the robot), or blink
+    ///                          after blinkIdleSeconds idle with empty hands.
+    /// The two helpers are independent: Muse cues can appear with the Behaviour helper off, and
+    /// behaviour cues fire on their timers regardless of stress.
     /// Returns the chosen pair (already announced on the event bus), or null if nothing should fire.
     private PiecePair ChooseFocus(List<PiecePair> ordered)
     {
@@ -177,47 +178,67 @@ public class PieceHintSystem : MonoBehaviour
         bool muse     = _globalHintWant && AssistanceSettings.MuseHelperEnabled;
         bool hard     = puzzleManager != null && puzzleManager.CurrentDifficulty == DifficultyLevel.Hard;
 
-        // Most-held unsolved piece (colour-match candidate) + whether ANY piece is in hand right now.
-        PiecePair held       = null;
+        // One scan of the unsolved pieces:
+        //   • held       — the piece held the LONGEST in total (colour-match candidate on Easy/Medium).
+        //   • liningUp    — a piece held RIGHT NOW that is near the robot: the "lining a piece up to
+        //                   place it" state (colour-match candidate on Hard, and the Muse near route).
+        //   • anyHeldNow  — is anything in hand at all (blink only fires with empty hands).
+        PiecePair held = null, liningUp = null;
         bool      anyHeldNow = false;
         foreach (var p in ordered)
         {
-            if (p.piece.IsHeld) anyHeldNow = true;
+            if (p.piece.IsHeld)
+            {
+                anyHeldNow = true;
+                if (liningUp == null && IsNearRobot(p.piece)) liningUp = p;
+            }
             if ((p.piece.IsHeld || p.piece.TotalHeldSeconds > 0f) &&
                 (held == null || p.piece.TotalHeldSeconds > held.piece.TotalHeldSeconds))
                 held = p;
         }
+        bool emptyHand = !anyHeldNow;
 
-        // Colour-match: they keep holding one piece but can't place it. Hard waits longer (a held
-        // piece means they're not lost), longer still when it's already by the robot.
-        float colorBase = hard ? hardColorMatchHoldSeconds : colorMatchHoldSeconds;
-        if (hard && held != null && held.piece.IsHeld && IsNearRobot(held.piece))
-            colorBase = hardColorMatchHoldNearRobotSeconds;
-        float heldSecs = held != null ? held.piece.TotalHeldSeconds : 0f;
+        // ── Muse / EEG: sustained stress is high (≥ hintThreshold) and the Muse helper is on. Skip the
+        //    behaviour timers and give INSTANT help, routed by where the player is working:
+        //      • lining a piece up at the robot → instant colour-match on that piece (ease the place).
+        //      • not at the robot (empty hands)  → instant blink on the nearest piece (guide them in).
+        //    The point of the Muse path is to relieve the overload the moment it's detected, rather
+        //    than waiting out a stall timer — so neither branch has a time threshold of its own.
+        if (muse && liningUp != null)
+        {
+            AdaptiveEventBus.Report($"Hint: '{Pretty(liningUp.piece.name)}' matches its coloured slot",
+                                    AdaptiveSignal.MuseStress);
+            return liningUp;
+        }
+        if (muse && emptyHand)
+        {
+            var pick = ordered[0];
+            AdaptiveEventBus.Report($"Hint: look for the glowing '{Pretty(pick.piece.name)}'",
+                                    AdaptiveSignal.MuseStress);
+            return pick;
+        }
 
-        // Blink: stalled with EMPTY hands. Holding a piece (any difficulty) means they're working it,
-        // not lost — so the blink never fires while something is in hand.
+        // ── Behaviour: time-based, needs the Behaviour helper. ──
+        // Colour-match: they keep holding one piece but can't place it (≥ colorMatchHoldSeconds of
+        // total hold). On Hard it ONLY fires while a held piece is near the robot (liningUp) — a piece
+        // held out in the room means they're still carrying it, not stuck lining it up.
+        PiecePair colorCand = hard ? liningUp : held;
+        float     colorBase = hard ? hardColorMatchHoldSeconds : colorMatchHoldSeconds;
+        if (behavior && colorCand != null && colorCand.piece.TotalHeldSeconds >= colorBase)
+        {
+            AdaptiveEventBus.Report($"Hint: '{Pretty(colorCand.piece.name)}' matches its coloured slot",
+                                    AdaptiveSignal.Behavior);
+            return colorCand;
+        }
+
+        // Blink: stalled with EMPTY hands for too long (not lining anything up). Resets on placement.
         float blinkBase = hard ? hardBlinkIdleSeconds : blinkIdleSeconds;
         float idleSecs  = Time.time - _lastPlaceTime;
-        bool  emptyHand = !anyHeldNow;
-
-        // Muse fires the same triggers at HALF the time; a cue inside that early window is a Muse cue.
-        bool colorMuse = muse     && held != null && heldSecs >= Mathf.Max(4f, colorBase * 0.5f);
-        bool colorBeh  = behavior && held != null && heldSecs >= Mathf.Max(4f, colorBase);
-        bool blinkMuse = muse     && emptyHand && idleSecs >= Mathf.Max(4f, blinkBase * 0.5f);
-        bool blinkBeh  = behavior && emptyHand && idleSecs >= Mathf.Max(4f, blinkBase);
-
-        if (colorMuse || colorBeh)
-        {
-            AdaptiveEventBus.Report($"Hint: '{Pretty(held.piece.name)}' matches its coloured slot",
-                                    colorMuse ? AdaptiveSignal.MuseStress : AdaptiveSignal.Behavior);
-            return held;
-        }
-        if (blinkMuse || blinkBeh)
+        if (behavior && emptyHand && idleSecs >= blinkBase)
         {
             var pick = ordered[0];   // nearest unsolved
             AdaptiveEventBus.Report($"Hint: look for the glowing '{Pretty(pick.piece.name)}'",
-                                    blinkMuse ? AdaptiveSignal.MuseStress : AdaptiveSignal.Behavior);
+                                    AdaptiveSignal.Behavior);
             return pick;
         }
         return null;

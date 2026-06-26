@@ -22,17 +22,15 @@ public class ArmLantern : MonoBehaviour
     [Tooltip("The lantern's beam (spotlight). Stays OFF until grabbed, then lights the arm direction.")]
     public Light beam;
 
-    [Header("Stress-reactive cone")]
-    [Tooltip("Spot angle (deg) when the player is calm — a tight, focused cone that doesn't wash the room.")]
-    public float baseSpotAngle = 26f;
-    [Tooltip("Spot angle (deg) when the player is very stressed — noticeably wider so the search pool grows.")]
+    [Header("Stress-reactive cone (brightness is NOT touched — the beam keeps the Light's fixed intensity)")]
+    [Tooltip("Spot angle (deg) when calm — a tighter, focused cone. Kept wide enough that there is " +
+             "always a usable pool of light so the player is never completely lost.")]
+    public float baseSpotAngle = 30f;
+    [Tooltip("Spot angle (deg) when very stressed — wider so the search pool grows.")]
     public float maxSpotAngle = 60f;
-    [Tooltip("Beam intensity when calm.")]
-    public float baseIntensity = 7.5f;
-    [Tooltip("Beam intensity when very stressed — clearly brighter so the help is obvious.")]
-    public float maxIntensity = 13f;
-    [Tooltip("Stress (0..1) at/above which the lantern visibly opens up and the help is announced.")]
-    public float stressThreshold = 0.70f;
+    [Tooltip("How fast (deg/sec) the cone eases toward its stress-driven width. Low = a slow, gentle " +
+             "open/close that doesn't snap with every stress flicker.")]
+    public float coneSlewSpeed = 5f;
 
     private XRGrabInteractable _grab;
     private Rigidbody _rb;
@@ -67,34 +65,35 @@ public class ArmLantern : MonoBehaviour
             _pendingHand = null;
         }
 
-        // While lit, OPEN UP the beam with the player's stress — both a wider cone AND a brighter
-        // beam — so a very stressed player gets a clearly bigger, brighter pool of light to search by.
-        // This is a MUSE-derived helper: when Muse Assist is switched off in the ≡ menu the lantern
-        // stays at its base cone/intensity and never reacts to stress.
-        if (beam != null && beam.enabled && !AssistanceSettings.MuseHelperEnabled)
-        {
-            beam.spotAngle = baseSpotAngle;
-            beam.intensity = baseIntensity;
-            _coneWideReported = false;
-        }
-        else if (beam != null && beam.enabled && CognitiveLoadAdapter.Instance != null)
-        {
-            float stress = CognitiveLoadAdapter.Instance.StressLevel;
-            beam.spotAngle = Mathf.Lerp(baseSpotAngle, maxSpotAngle, stress);
-            beam.intensity = Mathf.Lerp(baseIntensity, maxIntensity, stress);
+        // Not lit yet (lantern not grabbed) → nothing to drive; re-arm the one-shot cue so it
+        // announces again the next time the beam comes on.
+        if (beam == null || !beam.enabled) { _coneWideReported = false; return; }
 
-            // Announce the help once per high-stress episode (hysteresis so it can't spam).
-            if (!_coneWideReported && stress >= stressThreshold)
+        // Stress only ever re-shapes the CONE WIDTH — never the brightness. The beam keeps the fixed
+        // intensity set on its Light, so there is ALWAYS a minimum pool of light and the player can
+        // never be plunged into near-darkness when they calm down (the old "couldn't see anything once
+        // my stress dropped" bug came from also dimming the beam). When the Muse helper is off, the
+        // target is simply the base (calm) width.
+        float targetAngle = baseSpotAngle;
+        if (AssistanceSettings.MuseHelperEnabled && CognitiveLoadAdapter.Instance != null)
+            targetAngle = Mathf.Lerp(baseSpotAngle, maxSpotAngle, CognitiveLoadAdapter.Instance.StressLevel);
+
+        // Ease toward that width SLOWLY (coneSlewSpeed deg/sec) so it opens/closes gently instead of
+        // snapping with every stress flicker.
+        beam.spotAngle = Mathf.MoveTowards(beam.spotAngle, targetAngle, coneSlewSpeed * Time.deltaTime);
+
+        // Announce ONCE while the lantern is lit and the Muse helper is driving the cone; re-arms when
+        // the beam goes off or the Muse helper is toggled off.
+        if (AssistanceSettings.MuseHelperEnabled)
+        {
+            if (!_coneWideReported)
             {
-                AdaptiveEventBus.Report("High stress detected — opening your lantern wider and brighter to help you search",
+                AdaptiveEventBus.Report("Aligning lantern strength with your stress levels.",
                                         AdaptiveSignal.MuseStress);
                 _coneWideReported = true;
             }
-            else if (_coneWideReported && stress <= stressThreshold - 0.20f)
-            {
-                _coneWideReported = false;
-            }
         }
+        else _coneWideReported = false;
     }
 
     private void AttachToArm(Transform hand)

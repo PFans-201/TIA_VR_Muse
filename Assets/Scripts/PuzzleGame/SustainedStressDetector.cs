@@ -92,7 +92,10 @@ public class SustainedStressDetector : MonoBehaviour
     private void OnStressReceived(float stress)
     {
         float now = Time.time;
-        float dt  = _lastSampleTime >= 0f ? now - _lastSampleTime : 2f;
+        // Clamp the per-sample step. Stress samples are event-driven (only on a CHANGED reading), so a
+        // long gap between readings could otherwise add several seconds to the onset counter in one
+        // hit and trip "Stressed" almost instantly. Capping dt keeps the 20 s onset a real ~20 s.
+        float dt  = _lastSampleTime >= 0f ? Mathf.Min(now - _lastSampleTime, 1f) : 0f;
         _lastSampleTime = now;
 
         _buffer.Add((now, stress));
@@ -139,6 +142,24 @@ public class SustainedStressDetector : MonoBehaviour
                     _recoverySeconds = 0f;
                 }
                 break;
+        }
+    }
+
+    /// Clears the rolling window and returns to Calm with both dwell timers zeroed. Called at the start
+    /// of every puzzle so a stressed episode from a previous puzzle (or the menu) can't carry over —
+    /// the 20 s sustained-stress onset always starts fresh inside the new puzzle.
+    public void ResetState()
+    {
+        _buffer.Clear();
+        _lastSampleTime  = -1f;
+        _rollingMean     = 0f;
+        _rollingVariance = 0f;
+        _onsetSeconds    = 0f;
+        _recoverySeconds = 0f;
+        if (_state != StressState.Calm)
+        {
+            _state = StressState.Calm;
+            OnStateChanged?.Invoke(_state);
         }
     }
 

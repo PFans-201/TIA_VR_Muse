@@ -8,22 +8,10 @@ using UnityEngine;
 /// automatically increases assistance further when signals indicate overload,
 /// then retreats back to the chosen baseline once the player recovers.
 ///
-/// Assistance escalates in two stages as stress rises:
-///
-///   Stage 0  (stress < hintOnset)
-///     → No extra help. Piece colours, magnetism and ghost visibility are
-///       exactly as the player configured.
-///
-///   Stage 1  (hintOnset ≤ stress < assistanceOnset)
-///     → Colour hints only (handled by PieceHintSystem / CognitiveLoadAdapter).
-///       Mechanical settings unchanged.
-///
-///   Stage 2  (stress ≥ assistanceOnset)
-///     → Magnetic force, piece visibility and ghost alpha all gradually
-///       increase towards their Easy-mode (maximum assistance) values.
-///       The further above the threshold, the stronger the boost.
-///       When stress drops, assistance fades back out — slowly, so the
-///       transition feels natural and not jarring.
+/// While the sustained-stress detector reports Stressed, this controller continuously eases the
+/// active pieces toward their Easy-mode settings — stronger/wider magnet, brighter pieces, clearer
+/// ghost silhouettes — scaled by how far above assistanceOnset stress is, fading back out slowly on
+/// recovery (see PuzzleManager.OverrideAssistance).
 ///
 /// Setup in Unity Editor:
 ///   The PuzzleSceneBuilder adds this component automatically.
@@ -76,6 +64,9 @@ public class AdaptiveDifficultyController : MonoBehaviour
 
         if (stressDetector != null)
             stressDetector.OnStateChanged += OnStressStateChanged;
+
+        if (puzzleManager != null)
+            puzzleManager.OnPuzzleStarted += HandlePuzzleStarted;
     }
 
     private void OnDestroy()
@@ -84,6 +75,21 @@ public class AdaptiveDifficultyController : MonoBehaviour
             cognitiveLoad.OnStressChanged -= OnStressChanged;
         if (stressDetector != null)
             stressDetector.OnStateChanged -= OnStressStateChanged;
+        if (puzzleManager != null)
+            puzzleManager.OnPuzzleStarted -= HandlePuzzleStarted;
+    }
+
+    /// Every puzzle begins with NO accumulated easing. Without this, a stressed episode from a previous
+    /// puzzle (or from testing in the menu) leaves _currentBlend high, and the leftover assistance is
+    /// slammed onto the pieces the instant the next puzzle starts. Resetting here, plus restarting the
+    /// detector's onset, means easing only builds up from sustained stress INSIDE this puzzle.
+    private void HandlePuzzleStarted(DifficultyLevel _)
+    {
+        _sustainedStressActive = false;
+        _targetBlend           = 0f;
+        _currentBlend          = 0f;
+        stressDetector?.ResetState();
+        if (puzzleManager != null) puzzleManager.OverrideAssistance(0f);
     }
 
     private void Update()

@@ -574,7 +574,7 @@ public static class PuzzleSceneBuilder
         MakeUIText(panel.transform, "Title", "Before we start",
                    new Vector2(0f, 190f), new Vector2(680f, 70f), 40, new Color(0.18f, 0.18f, 0.18f));
         MakeUIText(panel.transform, "Body",
-                   "To adapt the game to you, we need to measure your brainwaves in a calm state. For the next 20 seconds after the confirmation, please stand still and as relaxed as possible, keeping your eyes open.\n" + "When you are ready to start, use the UI Press/back button to click 'OK'.",
+                   "To adapt the game to you, we need to measure your brainwaves in a calm state.\n\nWhen you are ready to start, click 'OK'  using the UI Press/back button.",
                    new Vector2(0f, 0f), new Vector2(660f, 250f), 24, new Color(0.22f, 0.22f, 0.22f));
         var okay = MakeButton(panel.transform, "OkayButton", "OK", new Vector2(0f, -190f), new Vector2(220f, 56f));
 
@@ -672,7 +672,7 @@ public static class PuzzleSceneBuilder
         MakeUIText(info.transform, "Title", "Get used to VR",
                    new Vector2(0f, 140f), new Vector2(680f, 60f), 38, new Color(0.18f, 0.18f, 0.18f));
         MakeUIText(info.transform, "Body",
-                   "Use the left thumbstick to move around and the right thumbstick or your body to turn. \n Move toward the objects on the platform and squeeze the grab button to pick them up and release to drop them. When you are grabbing an object, the right thumbstick can be used to rotate it, and you can only use your body to turn around. \n Use the 'A' button to jump.",
+                   "Left thumbstick : Move around | Right thumbstick: turn or rotate and object when grabbed. \n Grab button: Grab object \n 'A' button: jump.",
                    new Vector2(0f, -20f), new Vector2(660f, 250f), 23, new Color(0.22f, 0.22f, 0.22f));
 
         var timer = MakeUIText(root.transform, "Timer", "",
@@ -1133,9 +1133,21 @@ public static class PuzzleSceneBuilder
         var floorMat   = FloorMat();
         var wallMat    = WallMat();
         var ceilingMat = CeilingMat();
-        // Matte them so the lantern beam doesn't glint/bounce off the room and over-light it in the
-        // dark (the puzzle pieces keep their own, still-reflective, materials).
-        foreach (var m in new[] { floorMat, wallMat, ceilingMat }) MakeMatte(m);
+        // Matte the walls/ceiling so the lantern beam doesn't glint/bounce off them and over-light the
+        // room in the dark (the puzzle pieces keep their own, still-reflective, materials).
+        foreach (var m in new[] { wallMat, ceilingMat }) MakeMatte(m);
+
+        // The floor keeps its wood "floor material" but gets a TUNED-DOWN version of the robot pieces'
+        // sheen (smoothness 0.25 vs the pieces' 0.5, with specular + environment reflections on) so the
+        // lantern beam catches it a little — less mirror-flat than the matte walls, without flooding the
+        // dark room. Start from matte then re-enable the low reflectivity.
+        MakeMatte(floorMat);
+        floorMat.SetFloat("_Smoothness", 0.25f);
+        floorMat.SetFloat("_SpecularHighlights", 1f);
+        floorMat.SetFloat("_EnvironmentReflections", 1f);
+        floorMat.DisableKeyword("_SPECULARHIGHLIGHTS_OFF");
+        floorMat.DisableKeyword("_ENVIRONMENTREFLECTIONS_OFF");
+        EditorUtility.SetDirty(floorMat);
 
         // Puzzle stand uses the SAVED PuzzleStand.mat asset (the textured Onyx stand authored in the
         // Materials folder) so a scene rebuild reuses it instead of regenerating a flat grey table.
@@ -2038,18 +2050,18 @@ public static class PuzzleSceneBuilder
         var spot = spotGO.AddComponent<Light>();
         spot.type      = LightType.Spot;
         spot.color     = new Color(1f, 0.93f, 0.75f);
-        spot.intensity = 7.5f;       // brighter beam (still a tight cone + short range so it can't flood)
+        spot.intensity = 11f;        // FIXED brightness — stress only re-shapes the cone, never dims this,
+                                     // so there is always a usable pool of light (never "couldn't see").
         spot.range     = 4.5f;       // short reach so pointing into a corner no longer lights the whole room
-        spot.spotAngle = 26f;        // tight focused cone
+        spot.spotAngle = 30f;        // calm focused cone (matches baseSpotAngle below)
         spot.shadows   = LightShadows.None;
         spot.enabled   = false;
 
         var lantern = go.AddComponent<ArmLantern>();
         lantern.beam          = spot;
-        lantern.baseSpotAngle = 26f;   // calm — a focused beam, not a floodlight
+        lantern.baseSpotAngle = 30f;   // calm — a focused beam, kept wide enough to never lose the player
         lantern.maxSpotAngle  = 60f;   // very stressed → noticeably wider for an easier search
-        lantern.baseIntensity = 7.5f;  // calm brightness (matches the spot above)
-        lantern.maxIntensity  = 13f;   // very stressed → clearly brighter so the help is obvious
+        lantern.coneSlewSpeed = 5f;    // deg/sec — eases the cone open/closed slowly, no snapping
         go.SetActive(false);
         return go;
     }

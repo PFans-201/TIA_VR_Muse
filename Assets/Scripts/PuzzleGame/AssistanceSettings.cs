@@ -6,8 +6,8 @@ using System;
 ///   • Behaviour helper  — the colour-match + blink piece hints (PieceHintSystem), which fire from
 ///                          in-game behaviour: holding a piece too long, or stalling with no progress.
 ///   • Muse helper       — everything driven by the live MUSE S stress reading: the mechanical
-///                          assistance ramp (AdaptiveDifficultyController: stronger magnet / clearer
-///                          pieces) AND the stress-based speed-up of the behaviour hints.
+///                          assistance ramp (AdaptiveDifficultyController: stronger magnet + clearer
+///                          pieces), the stress-routed piece hints, and the lantern's reactive cone.
 ///
 /// Both default ON. They are independent: turning the Muse helper off still lets behaviour hints
 /// appear (just never accelerated by stress); turning the behaviour helper off silences the hints

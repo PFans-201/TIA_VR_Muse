@@ -40,10 +40,6 @@ public class PuzzlePiece : MonoBehaviour
     [Tooltip("Easy mode: pull/snap the piece into its slot even while it is still being held.")]
     [HideInInspector] public bool  magnetWhileHeld   = false;
 
-    // At full Muse stress the held-piece snap radius grows to (1 + this) × magnetRange, so a very
-    // stressed player can place a held piece without lining it up precisely. See FixedUpdate.
-    private const float k_HeldStressSnapBoost = 3f;
-
     /// Fires once when this piece reaches its correct placement.
     public event Action OnPieceSolved;
 
@@ -158,7 +154,31 @@ public class PuzzlePiece : MonoBehaviour
 
     private void FixedUpdate()
     {
-        if (_isSolved || correctPlacementTarget == null) return;
+        if (correctPlacementTarget == null) return;
+
+        // A solved piece is LOCKED to its slot — re-assert that lock every physics step.
+        //
+        // Why this is needed: a piece can be solved while still selected by the XR interactor
+        // (TryHeldSnap — the Easy magnetWhileHeld snap and the Muse stress-snap). MarkAsSolved then
+        // makes it kinematic AND disables its colliders (so the remaining pieces can nest flush).
+        // But when the hand later releases — or because MarkAsSolved disabled the grab and XRI
+        // force-cancels the selection — XRGrabInteractable.Detach() RESTORES the rigidbody to its
+        // cached state (isKinematic = false) and applies the controller's throw velocity. That
+        // revives the body, and since its colliders are off it falls straight THROUGH the pedestal
+        // ("placed pieces aren't held, they fall through the block"). Pinning here defeats that
+        // revival regardless of XRI's internal ordering or version.
+        if (_isSolved)
+        {
+            if (_rb != null && !_rb.isKinematic)
+            {
+                _rb.linearVelocity  = Vector3.zero;
+                _rb.angularVelocity = Vector3.zero;
+                _rb.isKinematic     = true;
+            }
+            transform.SetPositionAndRotation(correctPlacementTarget.position,
+                                             correctPlacementTarget.rotation);
+            return;
+        }
 
         float dist = Vector3.Distance(transform.position, correctPlacementTarget.position);
 
@@ -182,21 +202,10 @@ public class PuzzlePiece : MonoBehaviour
     }
 
     /// Snap a HELD piece into its slot when it is brought close enough.
-    ///   • Easy (magnetWhileHeld): snaps the moment it enters the normal magnet field.
-    ///   • Any difficulty: while the Muse helper is on, the player's live stress WIDENS the snap
-    ///     radius (up to (1 + k_HeldStressSnapBoost)× magnetRange at full stress), so an overwhelmed
-    ///     player can place a held piece without lining it up precisely. The slot is the piece's own
-    ///     spot on the robot, so this only fires when the correct piece is brought up to the assembly.
+    /// Easy (magnetWhileHeld): the held piece snaps the moment it enters the magnet field.
     private void TryHeldSnap(float dist)
     {
-        if (!isMagneticEnabled) return;
-
-        if (magnetWhileHeld && dist <= magnetRange) { MarkAsSolved(); return; }
-
-        float stress = AssistanceSettings.MuseHelperEnabled && CognitiveLoadAdapter.Instance != null
-                       ? CognitiveLoadAdapter.Instance.StressLevel : 0f;
-        if (stress > 0f && dist <= magnetRange * (1f + stress * k_HeldStressSnapBoost))
-            MarkAsSolved();
+        if (isMagneticEnabled && magnetWhileHeld && dist <= magnetRange) MarkAsSolved();
     }
 
     // ── Difficulty visibility ─────────────────────────────────────────────────

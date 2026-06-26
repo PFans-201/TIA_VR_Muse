@@ -1,21 +1,24 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.XR;
 using Unity.XR.CoreUtils;
 
 /// "Fix the floor / placement once and for all" — a proper RUNTIME version of the intent behind
 /// debug-hud's editor hacks (FixFall / FixFloorWidth), so it actually ships to the Quest and works
 /// in every scene without any manual menu step or scene regeneration.
 ///
-/// It self-installs on every scene load and provides two safety nets:
+/// It self-installs on every scene load and provides:
 ///   1. SAFETY FLOOR — a large invisible collider under the room so wherever the headset boundary
 ///      drops the player, there is always solid ground; they can never fall through the world.
-///   2. RECOVERY — if the player still ends up below a kill-plane (fell through) or absurdly far
-///      from the spawn point (boundary mis-spawn), the play space is gently TRANSLATED back.
-///
-/// CRITICAL: it does NOTHING during normal play — the recovery only fires on a real fall / far
-/// spawn, and it only TRANSLATES the rig (never rotates, never per-frame snaps), so unlike the old
-/// auto-recenter it cannot fight head tracking or bury the player.
+///   2. RECOVERY — if the player ends up below a kill-plane (fell through) or absurdly far from the
+///      spawn point (boundary mis-spawn), the play space is gently TRANSLATED back (never rotated).
+///   3. FACE THE CONTENT — the Meta Quest recenter (and app startup) points "forward" at whatever
+///      direction the player is PHYSICALLY facing, which is usually a wall, not the room. We hook the
+///      tracking-origin-updated event (fires on startup AND every Quest recenter) and yaw the rig ONCE
+///      so the camera looks the authored content direction. It's one-shot per recenter — nothing
+///      rotates per-frame — so head tracking is free between recenters.
 [DefaultExecutionOrder(50)]
 public class PlayerSpawnGuard : MonoBehaviour
 {
@@ -31,17 +34,20 @@ public class PlayerSpawnGuard : MonoBehaviour
     public float safetyFloorHalfSize = 500f;
 
     [Header("Spawn recenter on scene load")]
-    [Tooltip("Recenter the play space to the authored spawn XZ once, a few frames after each " +
-             "scene loads — so the player no longer has to reload to fix their start position. " +
-             "POSITION ONLY: this guard never rotates the rig — facing is baked into the scene at " +
-             "build time by SpawnXRRig (rig authored already looking at the text panels). A runtime " +
-             "yaw fought head tracking and sent the player to a side wall, so it was removed.")]
+    [Tooltip("Recenter the play space to the authored spawn XZ a few frames after each scene loads.")]
     public bool recenterOnSceneLoad = true;
+    [Tooltip("Face the player at the authored content direction (the menu/table) on app startup AND " +
+             "every time they press the Meta Quest recenter button — which otherwise leaves them facing " +
+             "whatever wall they were physically facing. One-shot per recenter; head tracking is free " +
+             "in between.")]
+    public bool faceContentOnRecenter = true;
     [Tooltip("Frames to wait after load for XR tracking to report a real camera pose before recentering.")]
     public int  recenterDelayFrames = 3;
 
     private XROrigin _origin;
     private Vector3  _spawn;
+    private Vector3  _spawnForward;   // the rig's authored forward (= the intended facing, at the content)
+    private readonly List<XRInputSubsystem> _xrInput = new();
 
     // ── Self-install: runs once on load, then for every scene ──────────────────
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -72,20 +78,53 @@ public class PlayerSpawnGuard : MonoBehaviour
 
     private void Awake()
     {
-        _origin = GetComponent<XROrigin>();
-        _spawn  = transform.position;   // the rig's authored spawn position
+        _origin       = GetComponent<XROrigin>();
+        _spawn        = transform.position;   // the rig's authored spawn position
+        _spawnForward = transform.forward;    // the rig's authored facing (SpawnXRRig aimed it at the content)
     }
 
-    // One-shot recenter on (every) scene load: slide the play space so the camera sits at the
-    // authored spawn XZ. This is the runtime equivalent of the manual reload the player used to
-    // need, and it fixes a boundary mis-spawn that drops them away from the room content.
     private void OnEnable()
     {
+        // Hook the Quest recenter / tracking-origin establishment. This fires on app startup AND every
+        // time the player presses the Meta Quest recenter button — exactly when "forward" gets pointed
+        // at a wall — so it's the right moment to re-face them at the content.
+        if (faceContentOnRecenter)
+        {
+            SubsystemManager.GetSubsystems(_xrInput);
+            foreach (var s in _xrInput)
+            {
+                s.trackingOriginUpdated -= HandleTrackingOriginUpdated;
+                s.trackingOriginUpdated += HandleTrackingOriginUpdated;
+            }
+        }
+
         if (recenterOnSceneLoad) StartCoroutine(RecenterAfterLoad());
     }
 
-    /// Re-run the one-shot recenter on demand (e.g. the "Restart Puzzle" button) so the player is
-    /// slid back to the authored spawn XZ, without a reload. POSITION ONLY — never rotates the rig.
+    private void OnDisable()
+    {
+        foreach (var s in _xrInput)
+            if (s != null) s.trackingOriginUpdated -= HandleTrackingOriginUpdated;
+    }
+
+    // Quest recenter pressed (or origin first established at startup). The recenter points the camera at
+    // the player's physical facing — re-face it at the content instead. Deferred a couple of frames so
+    // the recentred pose has actually applied before we read the camera's forward.
+    private void HandleTrackingOriginUpdated(XRInputSubsystem _)
+    {
+        if (isActiveAndEnabled) StartCoroutine(FaceContentDeferred());
+    }
+
+    private IEnumerator FaceContentDeferred()
+    {
+        yield return null;
+        yield return null;
+        FaceContentNow();
+    }
+
+    /// Re-run the one-shot recenter on demand (e.g. the "Restart Puzzle" button). POSITION ONLY — the
+    /// player is already turned toward the content, so we never re-rotate them here (a yaw would be a
+    /// mid-session snap). Facing is handled by the Quest recenter hook above.
     public void RecenterNow()
     {
         if (isActiveAndEnabled) StartCoroutine(RecenterAfterLoad());
@@ -97,13 +136,28 @@ public class PlayerSpawnGuard : MonoBehaviour
         for (int i = 0; i < Mathf.Max(1, recenterDelayFrames); i++) yield return null;
         if (_origin == null || _origin.Camera == null) yield break;
 
-        // XZ-only translation (height untouched → can't reintroduce the floor-sink). Same
-        // primitive the fall-recovery uses. We deliberately do NOT rotate: the runtime facing
-        // correction fought head tracking and sent the player to a side wall, so facing is now
-        // baked into the scene at build time (SpawnXRRig authors the rig looking at the panels).
+        // XZ-only translation (height untouched → can't reintroduce the floor-sink).
         Vector3 cam = _origin.Camera.transform.position;
         _origin.MoveCameraToWorldLocation(new Vector3(_spawn.x, cam.y, _spawn.z));
-        Debug.Log("[PlayerSpawnGuard] Recentered play space (position only) on scene load.");
+
+        // Initial facing attempt. On a WARM scene transition (Intro→Tutorial→Game) the camera pose is
+        // already valid, so this faces the content immediately. On a COLD app start the pose may not be
+        // settled yet and this is a no-op — but the Quest recenter hook (HandleTrackingOriginUpdated)
+        // fires once the orientation is actually established and faces the content then.
+        FaceContentNow();
+    }
+
+    /// One-shot yaw: rotate the rig around the camera so the camera's flat forward points the authored
+    /// content direction. Delta-based (camera-forward → authored forward), so it accounts for the live
+    /// headset yaw and points the camera AT the content rather than snapping to a fixed world yaw.
+    private void FaceContentNow()
+    {
+        if (!faceContentOnRecenter || _origin == null || _origin.Camera == null) return;
+        Vector3 camFwd = _origin.Camera.transform.forward; camFwd.y = 0f;
+        Vector3 want   = _spawnForward;                    want.y   = 0f;
+        if (camFwd.sqrMagnitude > 1e-4f && want.sqrMagnitude > 1e-4f)
+            _origin.RotateAroundCameraUsingOriginUp(
+                Vector3.SignedAngle(camFwd.normalized, want.normalized, Vector3.up));
     }
 
     private void LateUpdate()
